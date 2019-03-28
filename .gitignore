@@ -2,6 +2,9 @@
 /Chess/Chess-Client/SimpleGame/x64
 /Chess/Chess-Server/.vs
 
+/2019_WT_SERVER/.vs
+/2019_WT_SERVER/x64
+
 *.exe
 *.ilk
 *.pdb
