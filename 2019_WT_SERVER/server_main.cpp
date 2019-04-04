@@ -20,6 +20,7 @@ using namespace std;
 #include "protocol.h"
 #include <thread>
 #include <vector>
+#include <mutex>
 
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -36,6 +37,8 @@ struct OVER_EX{
 class SOCKETINFO
 {
 public:
+//	mutex access_lock;
+	bool in_use;
 	// 클라이언트마다 하나씩 있어야댐.. 하나로 공유하면 덮어써버리는거다... 밑에 4개는 클라마다 꼭 있어야 하는 것.. 必수要소
 	OVER_EX over_ex;
 	SOCKET socket;
@@ -43,33 +46,39 @@ public:
 	int prev_size;
 	char x, y;
 
-	SOCKETINFO(SOCKET s) {
-		socket = s;
-		ZeroMemory(&over_ex.over, sizeof(over_ex.overlapped)); // 오버랩드 구조체 클리어
+	SOCKETINFO() {
+		in_use = false;
 		over_ex.dataBuffer.len = MAX_BUFFER;
 		over_ex.dataBuffer.buf = over_ex.messageBuffer;
-		x = y = 4;
+		over_ex.is_recv = true;
 	}
 };
 
 HANDLE g_iocp;
+//0403 여기 수정하기
+SOCKETINFO clients[MAX_USER];
+//map <char, SOCKETINFO> clients;
 
-map <char, SOCKETINFO> clients;
-
-// 에러, 몇바이트 보냈는가, WSAOVERLAPPED overlapped의 주소, 플래그~
-// CALLBACK 함수를 하나만 사용해야 한다.....
-void CALLBACK recv_callback(DWORD Error, DWORD dataBytes, LPWSAOVERLAPPED overlapped, DWORD lnFlags);
-void CALLBACK send_callback(DWORD Error, DWORD dataBytes, LPWSAOVERLAPPED overlapped, DWORD lnFlags);
+void err_display(const char * msg, int err_no);
 int do_accept();
 void do_recv(char id);
+void send_packet(char client, void *packet);
+void send_pos_packet(char client, char pl);
+void send_login_ok_packet(char new_id);
+void send_remove_player_packet(char clinet, char id);
+void send_put_player_packet(char clients, char new_id);
+void process_packet(char client, char *packet);
+void disconnect_client(char id);
 void worker_thread();
 
 int main() {
 	vector <thread> worker_threads;
 
+	wcout.imbue(locale("korean"));
+
 	g_iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, 0, 0, 0);
 	for (int i = 0; i < 4; ++i) {
-		worker_threads.emplace_back(thread{ worker_threads });
+		worker_threads.emplace_back(thread{ worker_thread });
 	}
 
 	thread accept_thread{ do_accept };
@@ -81,71 +90,19 @@ int main() {
 	}
 }
 
-void CALLBACK recv_callback(DWORD Error, DWORD dataBytes, LPWSAOVERLAPPED overlapped, DWORD lnFlags)
+void err_display(const char * msg, int err_no)
 {
-	SOCKET client_s = reinterpret_cast<int>(overlapped->hEvent);
+	WCHAR *lpMsgBuf;
+	FormatMessage(
+		FORMAT_MESSAGE_ALLOCATE_BUFFER |
+		FORMAT_MESSAGE_FROM_SYSTEM,
+		NULL, err_no, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+		(LPWSTR)&lpMsgBuf, 0, NULL);
 
-	DWORD sendBytes = 0;
-	DWORD receiveBytes = 0;
-	DWORD flags = 0;
-
-	if (dataBytes == 0)
-	{
-		closesocket(clients[client_s].socket);
-		clients.erase(client_s);
-		return;
-	}  // 클라이언트가 closesocket을 했을 경우
-
-	cout << "TRACE - Receive message : "
-		<< clients[client_s].messageBuffer
-		<< " (" << dataBytes << ") bytes)\n";
-
-	clients[client_s].dataBuffer.len = dataBytes;
-	memset(&(clients[client_s].overlapped), 0x00, sizeof(WSAOVERLAPPED));
-	clients[client_s].overlapped.hEvent = (HANDLE)client_s;
-	if (WSASend(client_s, &(clients[client_s].dataBuffer), 1, &dataBytes, 0, &(clients[client_s].overlapped), send_callback) == SOCKET_ERROR)
-	{
-		if (WSAGetLastError() != WSA_IO_PENDING)
-		{
-			printf("Error - Fail WSASend(error_code : %d)\n", WSAGetLastError());
-		}
-	}
-
-}
-
-void CALLBACK send_callback(DWORD Error, DWORD dataBytes, LPWSAOVERLAPPED overlapped, DWORD lnFlags)
-{
-	DWORD sendBytes = 0;
-	DWORD receiveBytes = 0;
-	DWORD flags = 0;
-
-	SOCKET client_s = reinterpret_cast<int>(overlapped->hEvent);
-
-	if (dataBytes == 0)
-	{
-		closesocket(clients[client_s].socket);
-		clients.erase(client_s);
-		return;
-	}  // 클라이언트가 closesocket을 했을 경우
-
-	{
-		// WSASend(응답에 대한)의 콜백일 경우
-		clients[client_s].dataBuffer.len = MAX_BUFFER;
-		clients[client_s].dataBuffer.buf = clients[client_s].messageBuffer;
-
-		cout << "TRACE - Send message : "
-			<< clients[client_s].messageBuffer
-			<< " (" << dataBytes << " bytes)\n";
-		memset(&(clients[client_s].overlapped), 0x00, sizeof(WSAOVERLAPPED));
-		clients[client_s].overlapped.hEvent = (HANDLE)client_s;
-		if (WSARecv(client_s, &clients[client_s].dataBuffer, 1, &receiveBytes, &flags, &(clients[client_s].overlapped), recv_callback) == SOCKET_ERROR)
-		{
-			if (WSAGetLastError() != WSA_IO_PENDING)
-			{
-				printf("Error - Fail WSARecv(error_code : %d)\n", WSAGetLastError());
-			}
-		}
-	}
+	cout << msg;
+	wcout << L"에러  [" << err_no << L"] " << lpMsgBuf << endl;
+	while (true);
+	LocalFree(lpMsgBuf);
 }
 
 int do_accept()
@@ -174,7 +131,7 @@ int do_accept()
 	serverAddr.sin_addr.S_un.S_addr = htonl(INADDR_ANY);
 
 	// 2. 소켓설정
-	if (bind(listenSocket, (struct sockaddr*)&serverAddr, sizeof(SOCKADDR_IN)) == SOCKET_ERROR)
+	if (::bind(listenSocket, (struct sockaddr*)&serverAddr, sizeof(SOCKADDR_IN)) == SOCKET_ERROR)
 	{
 		cout << "Error - Fail bind\n";
 		// 6. 소켓종료
@@ -213,7 +170,7 @@ int do_accept()
 
 		int new_id = -1;
 		for (int i = 0; i < MAX_USER; ++i) {
-			if (0 == clients.count(i)) {
+			if (false == clients[i].in_use) {
 				new_id = i;
 				break;
 			}
@@ -225,13 +182,34 @@ int do_accept()
 		}
 
 		// recv 준비
-		clients[new_id] = SOCKETINFO{clientSocket}; // id를 갖고 클라를 알아야하기 때문에..
+		clients[new_id].socket = clientSocket;
+		clients[new_id].prev_size = 0;
+		clients[new_id].x = clients[new_id].y = 4;
+		ZeroMemory(&clients[new_id].over_ex.over, 
+			sizeof(clients[new_id].over_ex.over));
 		flags = 0;
 
 		CreateIoCompletionPort(reinterpret_cast<HANDLE>(clientSocket), g_iocp, new_id, 0);
 
-		do_recv(new_id);
+		clients[new_id].in_use = true; // IOCP에 등록 한 다음 true로 바꿔줘야 데이터를 받을 수 있당
 
+		send_login_ok_packet(new_id);
+		
+		// 다른 플레이어에게 내 위치를 전송
+		for (int i = 0; i < MAX_USER; ++i) {
+			if (true == clients[i].in_use) 
+				send_put_player_packet(i, new_id);
+		}
+
+		// 내 위치를 다른 플레이어에게 전송
+		for (int i = 0; i < MAX_USER; ++i) {
+			if (false == clients[i].in_use) continue;
+			if (i == new_id) continue;
+			
+			send_put_player_packet(new_id, i);
+		}
+		
+		do_recv(new_id);
 	}
 
 	// 6-2. 리슨 소켓종료
@@ -247,10 +225,9 @@ void do_recv(char id) {
 	DWORD flags = 0;
 
 	// 소켓, 버퍼 주소, 크기, 넘버 오브 리시브 어쩌고, 플래그, 이 클라 전용으로 만들어놓은 오버랩드 구조체, 콜백함수 포인터..
-	if (WSARecv(clients[id].socket, &clients[id].dataBuffer, 1,
-		NULL, &flags, &(clients[id].overlapped), recv_callback))
+	if (WSARecv(clients[id].socket, &clients[id].over_ex.dataBuffer, 1,
+		NULL, &flags, &(clients[id].over_ex.over), 0))
 	{
-		// 지금은 채팅프로그램이라서 Recv, Send 좀 돌렸지만 게임 서버는 이렇게 하면 딜레이에 뒤진다..
 		if (WSAGetLastError() != WSA_IO_PENDING)
 		{
 			cout << "Error - IO pending Failure\n";
@@ -263,19 +240,140 @@ void do_recv(char id) {
 
 }
 
+void send_packet(char client, void *packet) {
+	char *p = reinterpret_cast<char *>(packet);
+
+	OVER_EX *ov = new OVER_EX;
+	ov->dataBuffer.len = p[0];
+	ov->dataBuffer.buf = ov->messageBuffer;
+	ov->is_recv = false;
+	memcpy(ov->messageBuffer, p, p[0]);
+	ZeroMemory(&ov->over, sizeof(ov->over));
+
+	// delete 해주지 않으면 메모리 누수 생기니까 해주자
+	
+	int error = WSASend(clients[client].socket, &ov->dataBuffer, 1, 0, 0, &ov->over, NULL);
+
+	if (0 != error) {
+		if (WSAGetLastError() != WSA_IO_PENDING)
+		{
+			cout << "Error - IO pending Failure\n";
+			while (true);
+		}
+	}
+	else {
+//		cout << "Non Overlapped Send return.\n";
+	}
+}
+
+void send_pos_packet(char client, char pl) {
+	sc_packet_move_player packet;
+	packet.id = pl;
+	packet.size = sizeof(packet);
+	packet.type = SC_MOVE_PLAYER;
+	packet.x = clients[pl].x;
+	packet.y = clients[pl].y;
+
+	send_packet(client, &packet);
+}
+
+void send_login_ok_packet(char new_id) {
+	sc_packet_login_ok packet;
+	packet.id = new_id;
+	packet.size = sizeof(packet);
+	packet.type = SC_LOGIN_OK;
+
+	send_packet(new_id, &packet);
+}
+
+void send_remove_player_packet(char client, char id) {
+	sc_packet_remove_player packet;
+	packet.id = id;
+	packet.size = sizeof(packet);
+	packet.type = SC_REMOVE_PLAYER;
+
+	send_packet(client, &packet);
+}
+
+void send_put_player_packet(char client, char new_id) {
+	sc_packet_put_player packet;
+	packet.id = new_id;
+	packet.size = sizeof(packet);
+	packet.type = SC_PUT_PLAYER;
+	packet.x = clients[new_id].x;
+	packet.y = clients[new_id].y;
+
+	send_packet(client, &packet);
+}
+
+void process_packet(char client, char * packet) {
+	cs_packet_up *p = reinterpret_cast<cs_packet_up *>(packet);
+
+	int x = clients[client].x;
+	int y = clients[client].y;
+
+	switch (p->type) {
+	case CS_UP: if(y > 0) y--; break;
+	case CS_DOWN: if(y < (WORLD_HEIGHT - 1)) y++; break;
+	case CS_LEFT: if(x > 0) x--; break;
+	case CS_RIGHT: if (x < (WORLD_WIDTH - 1)) x++; break;
+	default:
+		wcout << L"정의되지 않은 패킷 도착 오류!!\n";
+		while (true);
+	}
+
+	clients[client].x = x;
+	clients[client].y = y;
+
+	for (int i = 0; i < MAX_USER; ++i) {
+		if (true == clients[i].in_use)
+			send_pos_packet(i, client);
+	}
+
+//	send_pos_packet(i, client);
+}
+
+void disconnect_client(char id) {
+	for (int i = 0; i < MAX_USER; ++i) {
+		if (false == clients[i].in_use) continue;
+		if (i == id) continue;
+
+		send_remove_player_packet(i, id);
+	}
+
+	closesocket(clients[id].socket);
+	clients[id].in_use = false;
+}
+
 void worker_thread() {
 
 	while (true) {
 		DWORD io_byte;
-		ULONG key;
+		ULONGLONG l_key;
 		OVER_EX *over_ex;
 
 		// IOCP는 worker_thread가 recv용, send용이 따로 나뉘지 않는다.. 그럼 어떻게 구분하냐..?
 		// 우리가 만든 오버랩드 확장 구조체의 포인터인 over를 통해서 알수있다!!~~!~!!!
-		bool is_error = GetQueuedCompletionStatus(g_iocp, &io_byte, &key, reinterpret_cast<LPWSAOVERLAPPED *>(&over_ex), INFINITE);
+		int is_error = GetQueuedCompletionStatus(g_iocp, &io_byte, &l_key, reinterpret_cast<LPWSAOVERLAPPED *>(&over_ex), INFINITE);
+
+		char key = static_cast<char>(l_key);
+
+		// 에러 2가지 경우
+		// 1. 클라가 closesocket하지 않고 종료한 경우
+		if (0 == is_error) {
+			int err_no = WSAGetLastError();
+			if (64 == err_no) disconnect_client(key);
+			else err_display("GQCS : ", err_no);
+		}
+
+		// 2. 클라가 closesocket하고 종료한 경우
+		if (0 == io_byte) {
+			disconnect_client(key);
+		}
 
 		if (true == over_ex->is_recv) {
 			// RECV
+//			wcout << "Packet from Client : " << key << endl;
 
 			// 패킷 조립
 			int rest = io_byte;
@@ -289,7 +387,7 @@ void worker_thread() {
 			while (0 < rest) {
 				// 패킷사이즈가 0이되서 넘어왔다? 그럼 만들어줘야지..
 				if (0 == packet_size) {
-					packet_size == ptr[0];
+					packet_size = ptr[0];
 				}
 				// 패킷을 완성하려면 앞으로 몇 바이트 더 받아와야하냐?
 				int required = packet_size - clients[key].prev_size;
@@ -313,7 +411,8 @@ void worker_thread() {
 			do_recv(key);
 		}
 		else {
-			// SEND
+			if(false == over_ex->is_recv)
+				delete over_ex;
 		}
 	}
 }
