@@ -21,6 +21,10 @@ using namespace std;
 #include <thread>
 #include <vector>
 #include <mutex>
+//#include <set>
+#include <unordered_set>
+#include <mutex>
+
 
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -40,6 +44,8 @@ public:
 //	mutex access_lock;
 	bool in_use;
 	// 클라이언트마다 하나씩 있어야댐.. 하나로 공유하면 덮어써버리는거다... 밑에 4개는 클라마다 꼭 있어야 하는 것.. 必수要소
+	unordered_set <int> viewlist;
+	mutex myLock;
 	OVER_EX over_ex;
 	SOCKET socket;
 	char packetBuffer[MAX_BUFFER];
@@ -55,9 +61,7 @@ public:
 };
 
 HANDLE g_iocp;
-//0403 여기 수정하기
 SOCKETINFO clients[MAX_USER];
-//map <char, SOCKETINFO> clients;
 
 void err_display(const char * msg, int err_no);
 int do_accept();
@@ -70,6 +74,7 @@ void send_put_player_packet(char clients, char new_id);
 void process_packet(char client, char *packet);
 void disconnect_client(char id);
 void worker_thread();
+bool is_eyesight(char client, char other_client);
 
 int main() {
 	vector <thread> worker_threads;
@@ -125,7 +130,7 @@ int do_accept()
 
 	// 서버정보 객체설정
 	SOCKADDR_IN serverAddr;
-	memset(&serverAddr, 0, sizeof(SOCKADDR_IN));
+//	memset(&serverAddr, 0, sizeof(SOCKADDR_IN));
 	serverAddr.sin_family = PF_INET;
 	serverAddr.sin_port = htons(SERVER_PORT);
 	serverAddr.sin_addr.S_un.S_addr = htonl(INADDR_ANY);
@@ -154,7 +159,7 @@ int do_accept()
 
 	SOCKADDR_IN clientAddr;
 	int addrLen = sizeof(SOCKADDR_IN);
-	memset(&clientAddr, 0, addrLen);
+//	memset(&clientAddr, 0, addrLen);
 	SOCKET clientSocket;
 	DWORD flags;
 
@@ -184,7 +189,8 @@ int do_accept()
 		// recv 준비
 		clients[new_id].socket = clientSocket;
 		clients[new_id].prev_size = 0;
-		clients[new_id].x = clients[new_id].y = 4;
+		clients[new_id].x = clients[new_id].y = 50;
+		clients[new_id].viewlist.clear(); // 뷰리스트 초기화
 		ZeroMemory(&clients[new_id].over_ex.over, 
 			sizeof(clients[new_id].over_ex.over));
 		flags = 0;
@@ -197,8 +203,20 @@ int do_accept()
 		
 		// 다른 플레이어에게 내 위치를 전송
 		for (int i = 0; i < MAX_USER; ++i) {
-			if (true == clients[i].in_use) 
-				send_put_player_packet(i, new_id);
+			if (true == clients[i].in_use) {
+				// other player in my eyesight
+				if (is_eyesight(new_id, i) == true) {
+					// other player packet add my id
+					send_put_player_packet(i, new_id);
+
+					if (i == new_id) continue;
+					// other player viewlist insert my id
+					clients[i].myLock.lock();
+					clients[i].viewlist.insert(i);
+					clients[i].myLock.unlock();
+				}
+
+			}
 		}
 
 		// 내 위치를 다른 플레이어에게 전송
@@ -206,7 +224,16 @@ int do_accept()
 			if (false == clients[i].in_use) continue;
 			if (i == new_id) continue;
 			
-			send_put_player_packet(new_id, i);
+			// other player in my eyesight
+			if (is_eyesight(i, new_id) == true) {
+				// my packet add other player
+				send_put_player_packet(new_id, i);
+
+				// my view list add other player id
+				clients[new_id].myLock.lock();
+				clients[new_id].viewlist.insert(i);
+				clients[new_id].myLock.unlock();
+			}
 		}
 		
 		do_recv(new_id);
@@ -325,12 +352,85 @@ void process_packet(char client, char * packet) {
 	clients[client].x = x;
 	clients[client].y = y;
 
+	unordered_set<int> nearlist;
+	nearlist.clear();
+
+	// add other player id in nearlist!
 	for (int i = 0; i < MAX_USER; ++i) {
-		if (true == clients[i].in_use)
-			send_pos_packet(i, client);
+		if (false == clients[i].in_use) continue;
+		if (i == client) continue;
+
+		// other player in my eyesight
+		if (is_eyesight(i, client) == true) {
+			nearlist.insert(i);
+		}
+
+	}
+	send_pos_packet(client, client);
+
+	if (!nearlist.empty()) {
+		// near -> view
+		for (auto &id : nearlist) {
+			cout << "in nearlist id : " << id << endl;
+
+			auto iter = clients[client].viewlist.find(id);
+
+			// no my viewlist
+			if (iter == clients[client].viewlist.end()) {
+				clients[client].myLock.lock();
+				clients[client].viewlist.insert(id);
+				clients[client].myLock.unlock();
+
+				send_put_player_packet(client, id);
+			}
+
+			auto other_iter = clients[id].viewlist.find(client);
+
+			// no me other player viewlist
+			if (other_iter == clients[id].viewlist.end()) {
+				clients[id].myLock.lock();
+				clients[id].viewlist.insert(client);
+				clients[id].myLock.unlock();
+
+				send_put_player_packet(id, client);
+			}
+
+			// yes me other player viewlist
+			else {
+				send_pos_packet(id, client);
+			}
+		}
 	}
 
-//	send_pos_packet(i, client);
+
+	clients[client].myLock.lock();
+	unordered_set<int> temp_viewlist = clients[client].viewlist;
+	clients[client].myLock.unlock();
+
+	// view -> near
+	if (!temp_viewlist.empty()) {
+//		cout << "here pung2" << endl;
+		for (auto &id : temp_viewlist) {
+			if (id == client) continue;
+
+			auto iter = nearlist.find(id);
+
+			// no my nearlist
+			if (iter == nearlist.end()) {
+				clients[client].myLock.lock();
+				clients[client].viewlist.erase(id);
+				clients[client].myLock.unlock();
+
+				send_remove_player_packet(client, id);
+				cout << "remove id" << id << endl;
+
+			}
+			cout << "near id" << id << endl;
+		}
+	}
+	
+
+
 }
 
 void disconnect_client(char id) {
@@ -338,11 +438,22 @@ void disconnect_client(char id) {
 		if (false == clients[i].in_use) continue;
 		if (i == id) continue;
 
-		send_remove_player_packet(i, id);
-	}
+		clients[i].myLock.lock();
+		unordered_set<int> temp_viewlist = clients[i].viewlist;
+		clients[i].myLock.unlock();
 
-	closesocket(clients[id].socket);
-	clients[id].in_use = false;
+		auto iter = temp_viewlist.find(id);
+		if (iter != temp_viewlist.end()) {
+			clients[i].myLock.lock();
+			clients[i].viewlist.erase(id);
+			clients[i].myLock.unlock();
+
+			send_remove_player_packet(i, id);
+		}
+
+		closesocket(clients[id].socket);
+		clients[id].in_use = false;
+	}
 }
 
 void worker_thread() {
@@ -417,3 +528,13 @@ void worker_thread() {
 	}
 }
 
+bool is_eyesight(char client, char other_client) {
+	int x = clients[client].x - clients[other_client].x;
+	int y = clients[client].y - clients[other_client].y;
+
+	int distance = (x * x) + (y * y);
+	int eyesight = 7;
+
+	if (distance < (eyesight*eyesight)) return true;
+	else return false;
+}

@@ -26,8 +26,8 @@
 // defines for windows 
 #define WINDOW_CLASS_NAME L"WINXCLASS"  // class name
 
-#define WINDOW_WIDTH    680   // size of window
-#define WINDOW_HEIGHT   730
+#define WINDOW_WIDTH    740   // size of window
+#define WINDOW_HEIGHT   790
 
 #define	BUF_SIZE				1024
 #define	WM_SOCKET				WM_USER + 1
@@ -417,7 +417,7 @@ int Game_Init(void *parms)
 	Set_Animation_BOB32(&player, 0);
 	Set_Anim_Speed_BOB32(&player, 4);
 	Set_Vel_BOB32(&player, 0, 0);
-	Set_Pos_BOB32(&player, 0, 0);
+	Set_Pos_BOB32(&player, 50, 50);
 
 
 	// create skelaton bob
@@ -430,7 +430,7 @@ int Game_Init(void *parms)
 		Set_Animation_BOB32(&skelaton[i], 0);
 		Set_Anim_Speed_BOB32(&skelaton[i], 4);
 		Set_Vel_BOB32(&skelaton[i], 0, 0);
-		Set_Pos_BOB32(&skelaton[i], 0, 0);
+		Set_Pos_BOB32(&skelaton[i], 50, 50);
 	}
 
 	// create skelaton bob
@@ -533,8 +533,8 @@ int Game_Main(void *parms)
 	g_pSprite->Begin(D3DXSPRITE_ALPHABLEND | D3DXSPRITE_SORT_TEXTURE);
 
 	// draw the background reactor image
-	for (int i = 0; i<10; ++i)
-		for (int j = 0; j<10; ++j)
+	for (int i = 0; i<11; ++i)
+		for (int j = 0; j<11; ++j)
 		{
 			int tile_x = i + g_left_x;
 			int tile_y = j + g_top_y;
