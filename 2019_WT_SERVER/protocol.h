@@ -1,8 +1,10 @@
 #pragma once
 
 constexpr int MAX_USER = 10;
-constexpr int WORLD_WIDTH = 100;
-constexpr int WORLD_HEIGHT = 100;
+constexpr int WORLD_WIDTH = 800;
+constexpr int WORLD_HEIGHT = 800;
+
+constexpr int MAX_NPC = 200000;
 
 constexpr int SERVER_PORT = 3500;
 

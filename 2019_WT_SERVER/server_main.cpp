@@ -29,6 +29,7 @@ using namespace std;
 #pragma comment(lib, "Ws2_32.lib")
 
 #define MAX_BUFFER        1024
+#define VIEW_RADIUS			3
 
 // 오버랩드 구조체를 확장해서 쓰자
 struct OVER_EX{
@@ -59,9 +60,21 @@ public:
 		over_ex.is_recv = true;
 	}
 };
+SOCKETINFO clients[MAX_USER];
+
+// NPC 구현 첫번째
+// 장점 : 메모리의 낭비가 없다. 직관적이다.
+// 단점 : 함수의 중복 구현이 필요하다.
+class NPCINFO {
+public :
+	char x, y;
+};
+NPCINFO npcs[MAX_NPC];
+
 
 HANDLE g_iocp;
-SOCKETINFO clients[MAX_USER];
+//SOCKETINFO clients[MAX_USER];
+
 
 void err_display(const char * msg, int err_no);
 int do_accept();
@@ -75,6 +88,8 @@ void process_packet(char client, char *packet);
 void disconnect_client(char id);
 void worker_thread();
 bool is_eyesight(char client, char other_client);
+
+bool Is_Near_Object(int a, int b);
 
 int main() {
 	vector <thread> worker_threads;
@@ -200,42 +215,60 @@ int do_accept()
 		clients[new_id].in_use = true; // IOCP에 등록 한 다음 true로 바꿔줘야 데이터를 받을 수 있당
 
 		send_login_ok_packet(new_id);
-		
-		// 다른 플레이어에게 내 위치를 전송
+		send_put_player_packet(new_id, new_id);
 		for (int i = 0; i < MAX_USER; ++i) {
-			if (true == clients[i].in_use) {
-				// other player in my eyesight
-				if (is_eyesight(new_id, i) == true) {
-					// other player packet add my id
-					send_put_player_packet(i, new_id);
+			if (false == clients[i].in_use) continue;
+			if (false == Is_Near_Object(new_id, i)) continue;
+			if (i == new_id) continue;
 
-					if (i == new_id) continue;
-					// other player viewlist insert my id
-					clients[i].myLock.lock();
-					clients[i].viewlist.insert(i);
-					clients[i].myLock.unlock();
-				}
-
-			}
+			clients[i].viewlist.insert(new_id);
+			send_put_player_packet(i, new_id);
 		}
 
-		// 내 위치를 다른 플레이어에게 전송
+		// 내 위치를 주변 플레이어에게 전송~
 		for (int i = 0; i < MAX_USER; ++i) {
 			if (false == clients[i].in_use) continue;
 			if (i == new_id) continue;
-			
-			// other player in my eyesight
-			if (is_eyesight(i, new_id) == true) {
-				// my packet add other player
-				send_put_player_packet(new_id, i);
-
-				// my view list add other player id
-				clients[new_id].myLock.lock();
-				clients[new_id].viewlist.insert(i);
-				clients[new_id].myLock.unlock();
-			}
+			if (false == Is_Near_Object(i, new_id)) continue;
+			clients[new_id].viewlist.insert(i);
+			send_put_player_packet(new_id, i);
 		}
-		
+
+		//		// 다른 플레이어에게 내 위치를 전송
+//		for (int i = 0; i < MAX_USER; ++i) {
+//			if (true == clients[i].in_use) {
+//				// other player in my eyesight
+//				if (is_eyesight(new_id, i) == true) {
+//					// other player packet add my id
+//					send_put_player_packet(i, new_id);
+//
+//					if (i == new_id) continue;
+//					// other player viewlist insert my id
+//					clients[i].myLock.lock();
+//					clients[i].viewlist.insert(i);
+//					clients[i].myLock.unlock();
+//				}
+//
+//			}
+//		}
+//
+//		// 내 위치를 다른 플레이어에게 전송
+//		for (int i = 0; i < MAX_USER; ++i) {
+//			if (false == clients[i].in_use) continue;
+//			if (i == new_id) continue;
+//			
+//			// other player in my eyesight
+//			if (is_eyesight(i, new_id) == true) {
+//				// my packet add other player
+//				send_put_player_packet(new_id, i);
+//
+//				// my view list add other player id
+//				clients[new_id].myLock.lock();
+//				clients[new_id].viewlist.insert(i);
+//				clients[new_id].myLock.unlock();
+//			}
+//		}
+
 		do_recv(new_id);
 	}
 
@@ -339,6 +372,8 @@ void process_packet(char client, char * packet) {
 	int x = clients[client].x;
 	int y = clients[client].y;
 
+	auto old_vl = clients[client].viewlist;
+
 	switch (p->type) {
 	case CS_UP: if(y > 0) y--; break;
 	case CS_DOWN: if(y < (WORLD_HEIGHT - 1)) y++; break;
@@ -352,83 +387,135 @@ void process_packet(char client, char * packet) {
 	clients[client].x = x;
 	clients[client].y = y;
 
-	unordered_set<int> nearlist;
-	nearlist.clear();
-
-	// add other player id in nearlist!
+	unordered_set <int> new_vl;
 	for (int i = 0; i < MAX_USER; ++i) {
-		if (false == clients[i].in_use) continue;
 		if (i == client) continue;
-
-		// other player in my eyesight
-		if (is_eyesight(i, client) == true) {
-			nearlist.insert(i);
-		}
-
+		if (false == Is_Near_Object(i, client)) continue;
+		new_vl.insert(i); // 이동 후에 보인 애들이 여기에 들어가있겠지.. 이걸로 비교하면 된다!
 	}
+
 	send_pos_packet(client, client);
 
-	if (!nearlist.empty()) {
-		// near -> view
-		for (auto &id : nearlist) {
-			cout << "in nearlist id : " << id << endl;
-
-			auto iter = clients[client].viewlist.find(id);
-
-			// no my viewlist
-			if (iter == clients[client].viewlist.end()) {
-				clients[client].myLock.lock();
-				clients[client].viewlist.insert(id);
-				clients[client].myLock.unlock();
-
-				send_put_player_packet(client, id);
-			}
-
-			auto other_iter = clients[id].viewlist.find(client);
-
-			// no me other player viewlist
-			if (other_iter == clients[id].viewlist.end()) {
-				clients[id].myLock.lock();
-				clients[id].viewlist.insert(client);
-				clients[id].myLock.unlock();
-
-				send_put_player_packet(id, client);
-			}
-
-			// yes me other player viewlist
-			else {
-				send_pos_packet(id, client);
-			}
+	// 3가지 Case가 있다
+	// Case 1. old_vl 에도 있고 new_vl에도 있는 플레이어 -> Send packet~
+	for (auto player : old_vl) {
+		if (0 == new_vl.count(player)) continue; // 새 뷰리스트에 상대방이 없다~
+		if (0 == clients[player].viewlist.count(client)) { // 상대방 뷰리스트에 나도 있으면 걍 보내기~
+			send_pos_packet(player, client);
+		}
+		else { // 나는 얘가 있는데 상대방 뷰리스트에 내가 없어.. 그럼 상대방 뷰리스트에 나를 추가하고 보내기
+			clients[player].viewlist.insert(client);
+			send_put_player_packet(player, client);
 		}
 	}
 
+	// Case 2. old_vl 에 없음, new_vl 에는 있음 -> 내 시야에 들어온거임~
+	for (auto player : new_vl) {
+		if (0 < old_vl.count(player)) continue; // 옛날 뷰리스트에 상대방이 있으면 통과~
 
-	clients[client].myLock.lock();
-	unordered_set<int> temp_viewlist = clients[client].viewlist;
-	clients[client].myLock.unlock();
+		// 없으면 내 뷰리스트에 추가해주자
+		clients[client].viewlist.insert(player);
+		send_put_player_packet(client, player);
 
-	// view -> near
-	if (!temp_viewlist.empty()) {
-//		cout << "here pung2" << endl;
-		for (auto &id : temp_viewlist) {
-			if (id == client) continue;
-
-			auto iter = nearlist.find(id);
-
-			// no my nearlist
-			if (iter == nearlist.end()) {
-				clients[client].myLock.lock();
-				clients[client].viewlist.erase(id);
-				clients[client].myLock.unlock();
-
-				send_remove_player_packet(client, id);
-				cout << "remove id" << id << endl;
-
-			}
-			cout << "near id" << id << endl;
+		if (0 == clients[player].viewlist.count(client)) {
+			clients[player].viewlist.insert(client);
+			send_put_player_packet(player, client);
+		}
+		else {
+			send_pos_packet(player, client);
 		}
 	}
-	
+
+	// Case 3. old_vl에 있었는데 new_vl에는 없는 경우 -> 내 시야에서 사라진 경우
+	for (auto player : old_vl) {
+		if (0 < new_vl.count(player)) continue;
+
+		clients[client].viewlist.erase(player);
+		send_remove_player_packet(client, player);
+
+		if (0 < clients[player].viewlist.count(client)) {
+			clients[player].viewlist.erase(client);
+			send_remove_player_packet(player, client);
+		}
+	}
+
+//	unordered_set<int> nearlist;
+//	nearlist.clear();
+//
+//	// add other player id in nearlist!
+//	for (int i = 0; i < MAX_USER; ++i) {
+//		if (false == clients[i].in_use) continue;
+//		if (i == client) continue;
+//
+//		// other player in my eyesight
+//		if (is_eyesight(i, client) == true) {
+//			nearlist.insert(i);
+//		}
+//
+//	}
+//	send_pos_packet(client, client);
+//
+//	if (!nearlist.empty()) {
+//		// near -> view
+//		for (auto &id : nearlist) {
+//			cout << "in nearlist id : " << id << endl;
+//
+//			auto iter = clients[client].viewlist.find(id);
+//
+//			// no my viewlist
+//			if (iter == clients[client].viewlist.end()) {
+//				clients[client].myLock.lock();
+//				clients[client].viewlist.insert(id);
+//				clients[client].myLock.unlock();
+//
+//				send_put_player_packet(client, id);
+//			}
+//
+//			auto other_iter = clients[id].viewlist.find(client);
+//
+//			// no me other player viewlist
+//			if (other_iter == clients[id].viewlist.end()) {
+//				clients[id].myLock.lock();
+//				clients[id].viewlist.insert(client);
+//				clients[id].myLock.unlock();
+//
+//				send_put_player_packet(id, client);
+//			}
+//
+//			// yes me other player viewlist
+//			else {
+//				send_pos_packet(id, client);
+//			}
+//		}
+//	}
+//
+//
+//	clients[client].myLock.lock();
+//	unordered_set<int> temp_viewlist = clients[client].viewlist;
+//	clients[client].myLock.unlock();
+//
+//	// view -> near
+//	if (!temp_viewlist.empty()) {
+////		cout << "here pung2" << endl;
+//		for (auto &id : temp_viewlist) {
+//			if (id == client) continue;
+//
+//			auto iter = nearlist.find(id);
+//
+//			// no my nearlist
+//			if (iter == nearlist.end()) {
+//				clients[client].myLock.lock();
+//				clients[client].viewlist.erase(id);
+//				clients[client].myLock.unlock();
+//
+//				send_remove_player_packet(client, id);
+//				cout << "remove id" << id << endl;
+//
+//			}
+//			cout << "near id" << id << endl;
+//		}
+//	}
+//	
 
 
 }
@@ -437,23 +524,29 @@ void disconnect_client(char id) {
 	for (int i = 0; i < MAX_USER; ++i) {
 		if (false == clients[i].in_use) continue;
 		if (i == id) continue;
+		if (0 == clients[i].viewlist.count(id)) continue;
 
-		clients[i].myLock.lock();
-		unordered_set<int> temp_viewlist = clients[i].viewlist;
-		clients[i].myLock.unlock();
+		clients[i].viewlist.erase(id);
+		send_remove_player_packet(i, id);
 
-		auto iter = temp_viewlist.find(id);
-		if (iter != temp_viewlist.end()) {
-			clients[i].myLock.lock();
-			clients[i].viewlist.erase(id);
-			clients[i].myLock.unlock();
-
-			send_remove_player_packet(i, id);
-		}
-
-		closesocket(clients[id].socket);
-		clients[id].in_use = false;
+		//clients[i].myLock.lock();
+		//unordered_set<int> temp_viewlist = clients[i].viewlist;
+		//clients[i].myLock.unlock();
+		//
+		//auto iter = temp_viewlist.find(id);
+		//if (iter != temp_viewlist.end()) {
+		//	clients[i].myLock.lock();
+		//	clients[i].viewlist.erase(id);
+		//	clients[i].myLock.unlock();
+		//
+		//	send_remove_player_packet(i, id);
+		//}
+		//
+		
 	}
+	closesocket(clients[id].socket);
+	clients[id].in_use = false;
+	clients[id].viewlist.clear();
 }
 
 void worker_thread() {
@@ -537,4 +630,13 @@ bool is_eyesight(char client, char other_client) {
 
 	if (distance < (eyesight*eyesight)) return true;
 	else return false;
+}
+
+bool Is_Near_Object(int a, int b) {
+	if (VIEW_RADIUS < abs(clients[a].x - clients[b].x))
+		return true;
+	if (VIEW_RADIUS < abs(clients[a].y - clients[b].y))
+		return true;
+	else
+		return false;
 }
