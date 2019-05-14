@@ -49,21 +49,21 @@ struct sc_packet_login_ok {
 struct sc_packet_put_player {
 	char size;
 	char type;
-	char id;
-	char x, y;
+	int id;
+	int x, y;
 };
 
 struct sc_packet_remove_player {
 	char size;
 	char type;
-	char id;
+	int id;
 };
 
 struct sc_packet_move_player {
 	char size;
 	char type;
-	char id;
-	char x, y;
+	int id;
+	int x, y;
 };
 
 #pragma pack(pop)

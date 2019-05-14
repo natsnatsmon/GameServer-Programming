@@ -28,7 +28,7 @@ using namespace std;
 #pragma comment(lib, "Ws2_32.lib")
 
 #define MAX_BUFFER        1024
-#define VIEW_RADIUS			3
+#define VIEW_RADIUS			15
 
 // 오버랩드 구조체를 확장해서 쓰자
 struct OVER_EX{
@@ -38,38 +38,77 @@ struct OVER_EX{
 	bool is_recv;
 };
 
-class SOCKETINFO
-{
-public:
-//	mutex access_lock;
-	bool in_use;
-	// 클라이언트마다 하나씩 있어야댐.. 하나로 공유하면 덮어써버리는거다... 밑에 4개는 클라마다 꼭 있어야 하는 것.. 必수要소
-	unordered_set <int> viewlist;
-	mutex myLock;
-	OVER_EX over_ex;
-	SOCKET socket;
-	char packetBuffer[MAX_BUFFER];
-	int prev_size;
-	char x, y;
-
-	SOCKETINFO() {
-		in_use = false;
-		over_ex.dataBuffer.len = MAX_BUFFER;
-		over_ex.dataBuffer.buf = over_ex.messageBuffer;
-		over_ex.is_recv = true;
-	}
-};
-SOCKETINFO clients[MAX_USER];
-
-// NPC 구현 첫번째
+//class SOCKETINFO
+//{
+//public:
+////	mutex access_lock;
+//	bool in_use;
+//	// 클라이언트마다 하나씩 있어야댐.. 하나로 공유하면 덮어써버리는거다... 밑에 4개는 클라마다 꼭 있어야 하는 것.. 必수要소
+//	unordered_set <int> viewlist;
+//	mutex myLock;
+//	OVER_EX over_ex;
+//	SOCKET socket;
+//	char packetBuffer[MAX_BUFFER];
+//	int prev_size;
+//	int x, y;
+//
+//	SOCKETINFO() {
+//		in_use = false;
+//		over_ex.dataBuffer.len = MAX_BUFFER;
+//		over_ex.dataBuffer.buf = over_ex.messageBuffer;
+//		over_ex.is_recv = true;
+//	}
+//};
+//SOCKETINFO clients[MAX_USER];
+//
+//// NPC 구현 첫번째
+//class NPCINFO {
+//public :
+//	int x, y;
+//};
+//NPCINFO npcs[MAX_NPC];
 // 장점 : 메모리의 낭비가 없다. 직관적이다.
 // 단점 : 함수의 중복 구현이 필요하다.
-class NPCINFO {
-public :
-	char x, y;
-};
-NPCINFO npcs[MAX_NPC];
-
+// // bool Is_Near_Object(int a, int b); 이 함수 하나를
+// // bool Is_Near_Player_Player, Is_Near_Player_Npc, Is_Near_Npc_Npc;
+ 
+ 
+// NPC 구현 두번째
+ class NPCINFO {
+ public :
+ 	char x, y;
+ };
+ 
+ class SOCKETINFO : public NPCINFO {
+ 	bool in_use;
+ 	mutex myLock;
+ 	OVER_EX over_ex;
+ 	SOCKET socket;
+ 	char packetBuffer[MAX_BUFFER];
+ 	int prev_size;
+ 	unordered_set <int> viewlist;
+ 	
+ 	SOCKETINFO() {
+ 		in_use = false;
+ 		over_ex.dataBuffer.len = MAX_BUFFER;
+ 		over_ex.dataBuffer.buf = over_ex.messageBuffer;
+ 		over_ex.is_recv = true;
+ 	}
+ };
+ 
+ NPCINFO *obejcts[MAX_USER + MAX_NPC];
+ // 장점 : 메모리의 낭비가 없다. 함수의 중복 구현이 필요 없다.
+ // 단점 : 포인터의 사용. 비직관적
+ // 특징 : ID 배분을 하거나, object_type 멤버가 필요. (추가적인 복잡도가 늘어남)
+// 
+// 
+// 
+// NPC 구현 실습 단순 무식
+// ID : 0 ~ 9 플레이어
+// ID : 10 ~ 10 + NUM_NPC - 1 까지는 NPC
+// SOCKETINFO clients[MAX_USER + MAX_NPC];
+// 장점 : 포인터 사용X
+// 단점 : 어마어마한 메모리 낭비
 
 HANDLE g_iocp;
 //SOCKETINFO clients[MAX_USER];
@@ -77,16 +116,16 @@ HANDLE g_iocp;
 
 void err_display(const char * msg, int err_no);
 int do_accept();
-void do_recv(char id);
-void send_packet(char client, void *packet);
-void send_pos_packet(char client, char pl);
-void send_login_ok_packet(char new_id);
-void send_remove_player_packet(char clinet, char id);
-void send_put_player_packet(char clients, char new_id);
-void process_packet(char client, char *packet);
-void disconnect_client(char id);
+void do_recv(int id);
+void send_packet(int client, void *packet);
+void send_pos_packet(int client, int pl);
+void send_login_ok_packet(int new_id);
+void send_remove_player_packet(int clinet, int id);
+void send_put_player_packet(int clients, int new_id);
+void process_packet(int client, char *packet);
+void disconnect_client(int id);
 void worker_thread();
-bool is_eyesight(char client, char other_client);
+bool is_eyesight(int client, int other_client);
 
 //bool Is_Near_Object(int a, int b);
 
@@ -273,7 +312,7 @@ int do_accept()
 	return 0;
 }
 
-void do_recv(char id) {
+void do_recv(int id) {
 	DWORD flags = 0;
 
 	// 소켓, 버퍼 주소, 크기, 넘버 오브 리시브 어쩌고, 플래그, 이 클라 전용으로 만들어놓은 오버랩드 구조체, 콜백함수 포인터..
@@ -292,7 +331,7 @@ void do_recv(char id) {
 
 }
 
-void send_packet(char client, void *packet) {
+void send_packet(int client, void *packet) {
 	char *p = reinterpret_cast<char *>(packet);
 
 	OVER_EX *ov = new OVER_EX;
@@ -318,7 +357,7 @@ void send_packet(char client, void *packet) {
 	}
 }
 
-void send_pos_packet(char client, char pl) {
+void send_pos_packet(int client, int pl) {
 	sc_packet_move_player packet;
 	packet.id = pl;
 	packet.size = sizeof(packet);
@@ -329,7 +368,7 @@ void send_pos_packet(char client, char pl) {
 	send_packet(client, &packet);
 }
 
-void send_login_ok_packet(char new_id) {
+void send_login_ok_packet(int new_id) {
 	sc_packet_login_ok packet;
 	packet.id = new_id;
 	packet.size = sizeof(packet);
@@ -338,7 +377,7 @@ void send_login_ok_packet(char new_id) {
 	send_packet(new_id, &packet);
 }
 
-void send_remove_player_packet(char client, char id) {
+void send_remove_player_packet(int client, int id) {
 	sc_packet_remove_player packet;
 	packet.id = id;
 	packet.size = sizeof(packet);
@@ -347,7 +386,7 @@ void send_remove_player_packet(char client, char id) {
 	send_packet(client, &packet);
 }
 
-void send_put_player_packet(char client, char new_id) {
+void send_put_player_packet(int client, int new_id) {
 	sc_packet_put_player packet;
 	packet.id = new_id;
 	packet.size = sizeof(packet);
@@ -358,7 +397,7 @@ void send_put_player_packet(char client, char new_id) {
 	send_packet(client, &packet);
 }
 
-void process_packet(char client, char * packet) {
+void process_packet(int client, char * packet) {
 	cs_packet_up *p = reinterpret_cast<cs_packet_up *>(packet);
 
 	int x = clients[client].x;
@@ -449,7 +488,7 @@ void process_packet(char client, char * packet) {
 	}
 }
 
-void disconnect_client(char id) {
+void disconnect_client(int id) {
 	for (int i = 0; i < MAX_USER; ++i) {
 		if (false == clients[i].in_use) continue;
 		if (i == id) continue;
@@ -538,7 +577,7 @@ void worker_thread() {
 	}
 }
 
-bool is_eyesight(char client, char other_client) {
+bool is_eyesight(int client, int other_client) {
 	int x = clients[client].x - clients[other_client].x;
 	int y = clients[client].y - clients[other_client].y;
 
@@ -548,12 +587,3 @@ bool is_eyesight(char client, char other_client) {
 	if (distance < (VIEW_RADIUS * VIEW_RADIUS)) return true;
 	else return false;
 }
-
-// bool Is_Near_Object(int a, int b) {
-// 	if (VIEW_RADIUS < abs(clients[a].x - clients[b].x))
-// 		return true;
-// 	if (VIEW_RADIUS < abs(clients[a].y - clients[b].y))
-// 		return true;
-// 	else
-// 		return false;
-// }
