@@ -148,8 +148,8 @@ if (!(bob->attr & BOB_ATTR_VISIBLE))
    return(1);
 
 
-	D3DXVECTOR3 pos = D3DXVECTOR3((bob->x - g_left_x) * 65.0f + 8, 
-		(bob->y - g_top_y) * 65.0f + 8, 0.0);
+	D3DXVECTOR3 pos = D3DXVECTOR3((bob->x - g_left_x) * 32.0f + 8, 
+		(bob->y - g_top_y) * 32.0f + 8, 0.0);
 
 	RECT my = {bob->tx[bob->curr_frame], bob->ty[bob->curr_frame], 
 		bob->tx[bob->curr_frame] + bob->width, bob->ty[bob->curr_frame] + bob->height };

@@ -28,82 +28,89 @@ using namespace std;
 #pragma comment(lib, "Ws2_32.lib")
 
 #define MAX_BUFFER        1024
-#define VIEW_RADIUS			15
+#define VIEW_RADIUS			8
+
+#define RECV				0
+#define SEND				1
+#define PLAYER_MOVE			2
+#define NPC_MOVE			3
+
+ULONG NPC_EVT = 1234;
 
 // 오버랩드 구조체를 확장해서 쓰자
 struct OVER_EX{
 	WSAOVERLAPPED over;
 	WSABUF dataBuffer;
 	char messageBuffer[MAX_BUFFER];
-	bool is_recv;
+	char command;
 };
 
-//class SOCKETINFO
-//{
-//public:
-////	mutex access_lock;
-//	bool in_use;
-//	// 클라이언트마다 하나씩 있어야댐.. 하나로 공유하면 덮어써버리는거다... 밑에 4개는 클라마다 꼭 있어야 하는 것.. 必수要소
-//	unordered_set <int> viewlist;
-//	mutex myLock;
-//	OVER_EX over_ex;
-//	SOCKET socket;
-//	char packetBuffer[MAX_BUFFER];
-//	int prev_size;
-//	int x, y;
-//
-//	SOCKETINFO() {
-//		in_use = false;
-//		over_ex.dataBuffer.len = MAX_BUFFER;
-//		over_ex.dataBuffer.buf = over_ex.messageBuffer;
-//		over_ex.is_recv = true;
-//	}
-//};
-//SOCKETINFO clients[MAX_USER];
-//
-//// NPC 구현 첫번째
-//class NPCINFO {
-//public :
-//	int x, y;
-//};
-//NPCINFO npcs[MAX_NPC];
+class SOCKETINFO
+{
+public:
+//	mutex access_lock;
+	bool in_use;
+	// 클라이언트마다 하나씩 있어야댐.. 하나로 공유하면 덮어써버리는거다... 밑에 4개는 클라마다 꼭 있어야 하는 것.. 必수要소
+	unordered_set <int> viewlist;
+	unordered_set <int> npc_viewlist;
+	mutex myLock;
+	OVER_EX over_ex;
+	SOCKET socket;
+	char packetBuffer[MAX_BUFFER];
+	int prev_size;
+	int x, y;
+
+	SOCKETINFO() {
+		in_use = false;
+		over_ex.dataBuffer.len = MAX_BUFFER;
+		over_ex.dataBuffer.buf = over_ex.messageBuffer;
+		over_ex.command = RECV;
+	}
+};
+SOCKETINFO clients[MAX_USER];
+
+// NPC 구현 첫번째
+class NPCINFO {
+public :
+	int x, y;
+};
+NPCINFO npcs[MAX_NPC];
 // 장점 : 메모리의 낭비가 없다. 직관적이다.
 // 단점 : 함수의 중복 구현이 필요하다.
 // // bool Is_Near_Object(int a, int b); 이 함수 하나를
 // // bool Is_Near_Player_Player, Is_Near_Player_Npc, Is_Near_Npc_Npc;
  
  
-// NPC 구현 두번째
- class NPCINFO {
- public :
- 	char x, y;
- };
+//// NPC 구현 두번째
+// class NPCINFO {
+// public :
+// 	char x, y;
+// };
+// 
+// class SOCKETINFO : public NPCINFO {
+// 	bool in_use;
+// 	mutex myLock;
+// 	OVER_EX over_ex;
+// 	SOCKET socket;
+// 	char packetBuffer[MAX_BUFFER];
+// 	int prev_size;
+// 	unordered_set <int> viewlist;
+// 	
+// 	SOCKETINFO() {
+// 		in_use = false;
+// 		over_ex.dataBuffer.len = MAX_BUFFER;
+// 		over_ex.dataBuffer.buf = over_ex.messageBuffer;
+// 		over_ex.is_recv = true;
+// 	}
+// };
+// 
+// NPCINFO *objects[MAX_USER + MAX_NPC];
  
- class SOCKETINFO : public NPCINFO {
- 	bool in_use;
- 	mutex myLock;
- 	OVER_EX over_ex;
- 	SOCKET socket;
- 	char packetBuffer[MAX_BUFFER];
- 	int prev_size;
- 	unordered_set <int> viewlist;
- 	
- 	SOCKETINFO() {
- 		in_use = false;
- 		over_ex.dataBuffer.len = MAX_BUFFER;
- 		over_ex.dataBuffer.buf = over_ex.messageBuffer;
- 		over_ex.is_recv = true;
- 	}
- };
- 
- NPCINFO *obejcts[MAX_USER + MAX_NPC];
  // 장점 : 메모리의 낭비가 없다. 함수의 중복 구현이 필요 없다.
  // 단점 : 포인터의 사용. 비직관적
  // 특징 : ID 배분을 하거나, object_type 멤버가 필요. (추가적인 복잡도가 늘어남)
-// 
-// 
-// 
-// NPC 구현 실습 단순 무식
+
+ // NPC 구현 실습 단순 무식
 // ID : 0 ~ 9 플레이어
 // ID : 10 ~ 10 + NUM_NPC - 1 까지는 NPC
 // SOCKETINFO clients[MAX_USER + MAX_NPC];
@@ -113,23 +120,40 @@ struct OVER_EX{
 HANDLE g_iocp;
 //SOCKETINFO clients[MAX_USER];
 
-
+void Init();
 void err_display(const char * msg, int err_no);
+
 int do_accept();
 void do_recv(int id);
 void send_packet(int client, void *packet);
+
 void send_pos_packet(int client, int pl);
+void send_npc_pos_packet(int client, int npc);
+
 void send_login_ok_packet(int new_id);
+
 void send_remove_player_packet(int clinet, int id);
+void send_remove_npc_packet(int client, int npc);
+
 void send_put_player_packet(int clients, int new_id);
+void send_put_npc_packet(int clients, int npc);
+
 void process_packet(int client, char *packet);
 void disconnect_client(int id);
+
 void worker_thread();
+void timer_thread();
+
+void move_npc();
+
 bool is_eyesight(int client, int other_client);
+bool is_npc_eyesight(int client, int npc);
 
 //bool Is_Near_Object(int a, int b);
 
 int main() {
+	Init();
+
 	vector <thread> worker_threads;
 
 	wcout.imbue(locale("korean"));
@@ -140,11 +164,19 @@ int main() {
 	}
 
 	thread accept_thread{ do_accept };
-
+	thread npc_thread{ timer_thread };
 	accept_thread.join();
+	npc_thread.join();
 
 	for (auto &th : worker_threads) {
 		th.join();
+	}
+}
+
+void Init() {
+	for (auto &npc : npcs) {
+		npc.x = rand() % WORLD_WIDTH;
+		npc.y = rand() % WORLD_HEIGHT;
 	}
 }
 
@@ -242,10 +274,11 @@ int do_accept()
 		// recv 준비
 		clients[new_id].socket = clientSocket;
 		clients[new_id].prev_size = 0;
-		clients[new_id].x = clients[new_id].y = 50;
+		clients[new_id].x = clients[new_id].y = 400;
 		clients[new_id].viewlist.clear(); // 뷰리스트 초기화
 		ZeroMemory(&clients[new_id].over_ex.over, 
 			sizeof(clients[new_id].over_ex.over));
+		clients[new_id].over_ex.command = RECV;
 		flags = 0;
 
 		CreateIoCompletionPort(reinterpret_cast<HANDLE>(clientSocket), g_iocp, new_id, 0);
@@ -255,16 +288,7 @@ int do_accept()
 		send_login_ok_packet(new_id);
 		send_put_player_packet(new_id, new_id); // 나한테 내 위치 보내기
 
-		//for (int i = 0; i < MAX_USER; ++i) {
-		//	if (false == clients[i].in_use) continue;
-		//	if (false == is_eyesight(new_id, i)) continue;
-		//	if (i == new_id) continue;
-
-		//	clients[i].viewlist.insert(new_id);
-		//	send_put_player_packet(i, new_id);
-		//}
-
-		// 다른 플레이어에게 내 위치를 전송
+		// 다른 플레이어의 뷰리스트에 나를 추가하고 전송
 		for (int i = 0; i < MAX_USER; ++i) {
 			if (false == clients[i].in_use) continue;
 			if (false == is_eyesight(new_id, i)) continue;
@@ -278,16 +302,7 @@ int do_accept()
 		}
 
 
-		//// 내 위치를 주변 플레이어에게 전송~
-		//for (int i = 0; i < MAX_USER; ++i) {
-		//	if (false == clients[i].in_use) continue;
-		//	if (i == new_id) continue;
-		//	if (false == is_eyesight(i, new_id)) continue;
-		//	clients[new_id].viewlist.insert(i);
-		//	send_put_player_packet(new_id, i);
-		//}
-
-		// 내 위치를 다른 플레이어에게 전송
+		// 내 위치를 뷰리스트에 있는 다른 플레이어에게 전송
 		for (int i = 0; i < MAX_USER; ++i) {
 			if (false == clients[i].in_use) continue;
 			if (i == new_id) continue;
@@ -298,6 +313,18 @@ int do_accept()
 			clients[new_id].myLock.unlock();
 
 			send_put_player_packet(new_id, i);
+		}
+
+
+		// 내 주변에 있는 NPC를 뷰리스트에 추가
+		for (int i = 0; i < MAX_NPC; ++i) {
+			if (false == is_npc_eyesight(new_id, i)) continue;
+
+			clients[new_id].myLock.lock();
+			clients[new_id].npc_viewlist.insert(i);
+			clients[new_id].myLock.unlock();
+
+			send_put_npc_packet(new_id, i);
 		}
 
 		do_recv(new_id);
@@ -337,7 +364,7 @@ void send_packet(int client, void *packet) {
 	OVER_EX *ov = new OVER_EX;
 	ov->dataBuffer.len = p[0];
 	ov->dataBuffer.buf = ov->messageBuffer;
-	ov->is_recv = false;
+	ov->command = SEND;
 	memcpy(ov->messageBuffer, p, p[0]);
 	ZeroMemory(&ov->over, sizeof(ov->over));
 
@@ -355,6 +382,8 @@ void send_packet(int client, void *packet) {
 	else {
 //		cout << "Non Overlapped Send return.\n";
 	}
+
+	//delete ov;
 }
 
 void send_pos_packet(int client, int pl) {
@@ -364,6 +393,20 @@ void send_pos_packet(int client, int pl) {
 	packet.type = SC_MOVE_PLAYER;
 	packet.x = clients[pl].x;
 	packet.y = clients[pl].y;
+	
+	//cout << "send pos packet client " << client << '\n';
+	//cout << clients[pl].x << ", " << clients[pl].y << '\n';
+
+	send_packet(client, &packet);
+}
+
+void send_npc_pos_packet(int client, int npc) {
+	sc_packet_move_player packet;
+	packet.id = npc;
+	packet.size = sizeof(packet);
+	packet.type = SC_MOVE_NPC;
+	packet.x = npcs[npc].x;
+	packet.y = npcs[npc].y;
 
 	send_packet(client, &packet);
 }
@@ -386,6 +429,15 @@ void send_remove_player_packet(int client, int id) {
 	send_packet(client, &packet);
 }
 
+void send_remove_npc_packet(int client, int npc) {
+	sc_packet_remove_player packet;
+	packet.id = npc;
+	packet.size = sizeof(packet);
+	packet.type = SC_REMOVE_NPC;
+
+	send_packet(client, &packet);
+}
+
 void send_put_player_packet(int client, int new_id) {
 	sc_packet_put_player packet;
 	packet.id = new_id;
@@ -397,6 +449,17 @@ void send_put_player_packet(int client, int new_id) {
 	send_packet(client, &packet);
 }
 
+void send_put_npc_packet(int client, int npc) {
+	sc_packet_put_player packet;
+	packet.id = npc;
+	packet.size = sizeof(packet);
+	packet.type = SC_PUT_NPC;
+	packet.x = npcs[npc].x;
+	packet.y = npcs[npc].y;
+
+	send_packet(client, &packet);
+}
+
 void process_packet(int client, char * packet) {
 	cs_packet_up *p = reinterpret_cast<cs_packet_up *>(packet);
 
@@ -404,6 +467,7 @@ void process_packet(int client, char * packet) {
 	int y = clients[client].y;
 
 	auto old_vl = clients[client].viewlist;
+	auto old_npc_vl = clients[client].npc_viewlist;
 
 	switch (p->type) {
 	case CS_UP: if(y > 0) y--; break;
@@ -424,7 +488,7 @@ void process_packet(int client, char * packet) {
 		if (false == is_eyesight(i, client)) continue; // 안보이면 추가안함
 		new_vl.insert(i); // 이동 후에 보인 애들이 여기에 들어가있겠지.. 이걸로 비교하면 된다!
 	}
-
+	
 	send_pos_packet(client, client);
 
 	// 3가지 Case가 있다
@@ -486,6 +550,47 @@ void process_packet(int client, char * packet) {
 			send_remove_player_packet(player, client);
 		}
 	}
+
+
+	// npc 뷰리스트
+	unordered_set <int> new_npc_vl; // 이동 후의 새로운 뷰리스트
+	for (int i = 0; i < MAX_NPC; ++i) {
+		if (false == is_npc_eyesight(client, i)) continue;
+		new_npc_vl.insert(i); // 이동 후에 보이는 npc들
+	}
+
+
+	// Case 1. old_vl, new_vl에 있는 npc
+	for (auto npc : old_npc_vl) {
+		if (0 == new_npc_vl.count(npc)) continue;
+		else { 
+			send_put_npc_packet(client, npc);
+		}
+	}
+
+	// Case 2. old_vl 에 없음, new_vl 에는 있음 -> 내 시야에 들어온거임~
+	for (auto npc : new_npc_vl) {
+		if (0 < old_npc_vl.count(npc)) continue; // 옛날 뷰리스트에 있으면 통과~
+
+		// 없으면 내 뷰리스트에 추가해주자
+		clients[client].myLock.lock();
+		clients[client].npc_viewlist.insert(npc);
+		clients[client].myLock.unlock();
+
+		send_put_npc_packet(client, npc);
+	}
+
+	// Case 3. old_vl에 있었는데 new_vl에는 없는 경우 -> 내 시야에서 사라진 경우
+	for (auto npc : old_npc_vl) {
+		if (0 < new_npc_vl.count(npc)) continue; // 새로운 리스트에 있으면 넘어가~
+
+		clients[client].myLock.lock();
+		clients[client].npc_viewlist.erase(npc);
+		clients[client].myLock.unlock();
+
+		send_remove_npc_packet(client, npc);
+	}
+
 }
 
 void disconnect_client(int id) {
@@ -510,11 +615,13 @@ void worker_thread() {
 	while (true) {
 		DWORD io_byte;
 		ULONGLONG l_key;
-		OVER_EX *over_ex;
+		OVER_EX *over_ex = new OVER_EX;
+
+//		WSAOVERLAPPED *over;
 
 		// IOCP는 worker_thread가 recv용, send용이 따로 나뉘지 않는다.. 그럼 어떻게 구분하냐..?
 		// 우리가 만든 오버랩드 확장 구조체의 포인터인 over를 통해서 알수있다!!~~!~!!!
-		int is_error = GetQueuedCompletionStatus(g_iocp, &io_byte, &l_key, reinterpret_cast<LPWSAOVERLAPPED *>(&over_ex), INFINITE);
+		int is_error = GetQueuedCompletionStatus(g_iocp, &io_byte, &l_key, reinterpret_cast<LPOVERLAPPED *>(&over_ex), INFINITE);
 
 		char key = static_cast<char>(l_key);
 
@@ -531,7 +638,18 @@ void worker_thread() {
 			disconnect_client(key);
 		}
 
-		if (true == over_ex->is_recv) {
+
+		// npc 이동하라는 커맨드면
+		if (l_key == NPC_EVT) {
+			if (over_ex->command == NPC_MOVE) {
+				move_npc();
+				cout << npcs[0].x << ", " << npcs[0].y << '\n';
+				cout << npcs[10].x << ", " << npcs[10].y << '\n';
+				cout << npcs[100].x << ", " << npcs[100].y << '\n';
+			}
+		}
+
+		if (RECV == over_ex->command) {
 			// RECV
 //			wcout << "Packet from Client : " << key << endl;
 
@@ -571,10 +689,84 @@ void worker_thread() {
 			do_recv(key);
 		}
 		else {
-			if(false == over_ex->is_recv)
+			if(SEND == over_ex->command)
 				delete over_ex;
 		}
 	}
+}
+
+
+void timer_thread() {
+	while (true) {
+		Sleep(1000);
+		ULONG l_key = NPC_EVT;
+		OVER_EX* ov = new OVER_EX;
+
+		ZeroMemory(&ov->over, sizeof(ov->over));
+		ov->command = NPC_MOVE;
+		ov->dataBuffer.len = 0;
+		ov->dataBuffer.buf = 0;
+		ov->command = NPC_MOVE;
+
+		PostQueuedCompletionStatus(g_iocp, 1, l_key, &ov->over);
+	}
+}
+
+void move_npc() {
+	for (int client = 0; client < MAX_USER; ++client) {
+		if (false == clients[client].in_use) continue;
+		auto old_npc_vl = clients[client].npc_viewlist;
+
+		cout << "move npc\n";
+		for (int i = 0; i < MAX_NPC; ++i) {
+			switch (rand() % 4 + 1) {
+			case 1: if (npcs[i].y > 0) npcs[i].y--; break;
+			case 2: if (npcs[i].y < (WORLD_HEIGHT - 1)) npcs[i].y++; break;
+			case 3: if (npcs[i].x > 0) npcs[i].x--; break;
+			case 4: if (npcs[i].x < (WORLD_WIDTH - 1)) npcs[i].x++; break;
+			default: break;
+			}
+		}
+
+		unordered_set <int> new_npc_vl; // 이동 후의 새로운 뷰리스트
+		for (int i = 0; i < MAX_NPC; ++i) {
+			if (false == is_npc_eyesight(client, i)) continue;
+			new_npc_vl.insert(i); // 이동 후에 보이는 npc들
+		}
+
+
+		// Case 1. old_vl, new_vl에 있는 npc
+		for (auto npc : old_npc_vl) {
+			if (0 == new_npc_vl.count(npc)) continue;
+			else {
+				send_put_npc_packet(client, npc);
+			}
+		}
+
+		// Case 2. old_vl 에 없음, new_vl 에는 있음 -> 내 시야에 들어온거임~
+		for (auto npc : new_npc_vl) {
+			if (0 < old_npc_vl.count(npc)) continue; // 옛날 뷰리스트에 있으면 통과~
+
+			// 없으면 내 뷰리스트에 추가해주자
+			clients[client].myLock.lock();
+			clients[client].npc_viewlist.insert(npc);
+			clients[client].myLock.unlock();
+
+			send_put_npc_packet(client, npc);
+		}
+
+		// Case 3. old_vl에 있었는데 new_vl에는 없는 경우 -> 내 시야에서 사라진 경우
+		for (auto npc : old_npc_vl) {
+			if (0 < new_npc_vl.count(npc)) continue; // 새로운 리스트에 있으면 넘어가~
+
+			clients[client].myLock.lock();
+			clients[client].npc_viewlist.erase(npc);
+			clients[client].myLock.unlock();
+
+			send_remove_npc_packet(client, npc);
+		}
+	}
+
 }
 
 bool is_eyesight(int client, int other_client) {
@@ -582,7 +774,16 @@ bool is_eyesight(int client, int other_client) {
 	int y = clients[client].y - clients[other_client].y;
 
 	int distance = (x * x) + (y * y);
-	int eyesight = 7;
+
+	if (distance < (VIEW_RADIUS * VIEW_RADIUS)) return true;
+	else return false;
+}
+
+bool is_npc_eyesight(int client, int npc) {
+	int x = clients[client].x - npcs[npc].x;
+	int y = clients[client].y - npcs[npc].y;
+
+	int distance = (x * x) + (y * y);
 
 	if (distance < (VIEW_RADIUS * VIEW_RADIUS)) return true;
 	else return false;

@@ -39,6 +39,9 @@ constexpr int SC_LOGIN_OK		= 1; // 서버에 접속한걸 관대하게 받아주겠다~
 constexpr int SC_PUT_PLAYER		= 2; // 플레이어 집어 넣는다~
 constexpr int SC_REMOVE_PLAYER	= 3; // 클라가 게임 접속 종료했다~
 constexpr int SC_MOVE_PLAYER	= 4; // 플레이어가 새 좌표로 이동했으니 표시하는 좌표를 바꿔랑
+constexpr int SC_PUT_NPC		= 5;
+constexpr int SC_REMOVE_NPC		= 6;
+constexpr int SC_MOVE_NPC		= 7;
 
 struct sc_packet_login_ok {
 	char size;

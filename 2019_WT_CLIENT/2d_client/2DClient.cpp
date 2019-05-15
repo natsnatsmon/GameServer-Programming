@@ -54,7 +54,7 @@ BITMAP_IMAGE reactor;      // the background
 
 BITMAP_IMAGE black_tile;
 BITMAP_IMAGE white_tile;
-#define TILE_WIDTH 33
+#define TILE_WIDTH 32
 
 #define UNIT_TEXTURE  0
 
@@ -107,13 +107,24 @@ void ProcessPacket(char *ptr)
 		}
 		break;
 	}
+	case SC_PUT_NPC:
+	{		
+		sc_packet_put_player *my_packet = reinterpret_cast<sc_packet_put_player *>(ptr);
+		int id = my_packet->id;
+
+		npc[id].x = my_packet->x;
+		npc[id].y = my_packet->y;
+		npc[id].attr |= BOB_ATTR_VISIBLE;
+
+		break;
+	}
 	case SC_MOVE_PLAYER:
 	{
 		sc_packet_move_player *my_packet = reinterpret_cast<sc_packet_move_player *>(ptr);
 		int other_id = my_packet->id;
 		if (other_id == g_myid) {
-			g_left_x = my_packet->x - 4;
-			g_top_y = my_packet->y - 4;
+			g_left_x = my_packet->x - 10;
+			g_top_y = my_packet->y - 10;
 			player.x = my_packet->x;
 			player.y = my_packet->y;
 		}
@@ -127,7 +138,17 @@ void ProcessPacket(char *ptr)
 		}
 		break;
 	}
+	case SC_MOVE_NPC: 
+	{
+		sc_packet_move_player *my_packet = reinterpret_cast<sc_packet_move_player *>(ptr);
+		int other_id = my_packet->id;
 
+		npc[other_id].x = my_packet->x;
+		npc[other_id].y = my_packet->y;
+
+
+		break;
+	}
 	case SC_REMOVE_PLAYER:
 	{
 		sc_packet_remove_player *my_packet = reinterpret_cast<sc_packet_remove_player *>(ptr);
@@ -142,6 +163,16 @@ void ProcessPacket(char *ptr)
 	//		npc[other_id - NPC_START].attr &= ~BOB_ATTR_VISIBLE;
 		}
 		break;
+	}
+	case SC_REMOVE_NPC :
+	{
+		sc_packet_remove_player *my_packet = reinterpret_cast<sc_packet_remove_player *>(ptr);
+		int other_id = my_packet->id;
+
+		npc[other_id].attr &= ~BOB_ATTR_VISIBLE;
+
+		break;
+
 	}
 	/*
 	case SC_CHAT:
@@ -327,7 +358,7 @@ int WINAPI WinMain(HINSTANCE hinstance,
 	if (!(hwnd = CreateWindow(WINDOW_CLASS_NAME, // class
 		L"Chess Client",	 // title
 		WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-		0, 0,	   // x,y
+		50, 50,	   // x,y
 		WINDOW_WIDTH,  // width
 		WINDOW_HEIGHT, // height
 		NULL,	   // handle to parent 
@@ -396,7 +427,7 @@ int Game_Init(void *parms)
 	Create_Bitmap32(&white_tile, 0, 0, 256, 257);
 	Load_Image_Bitmap32(&reactor, L"CHESSMAP.BMP", 0, 0, BITMAP_EXTRACT_MODE_ABS);
 	Load_Image_Bitmap32(&black_tile, L"CHESSMAP.BMP", 0, 0, BITMAP_EXTRACT_MODE_ABS);
-	black_tile.x = 34;
+	black_tile.x = 32;
 	black_tile.y = 2;
 	black_tile.height = TILE_WIDTH;
 	black_tile.width = TILE_WIDTH;
@@ -408,40 +439,40 @@ int Game_Init(void *parms)
 
 	// now let's load in all the frames for the skelaton!!!
 
-	Load_Texture(L"CHESS2.PNG", UNIT_TEXTURE, 196, 33);
+	Load_Texture(L"CHESS2.PNG", UNIT_TEXTURE, 196, 32);
 
-	if (!Create_BOB32(&player, 0, 0, 30, 30, 1, BOB_ATTR_SINGLE_FRAME)) return(0);
+	if (!Create_BOB32(&player, 0, 0, 32, 32, 1, BOB_ATTR_SINGLE_FRAME)) return(0);
 	Load_Frame_BOB32(&player, UNIT_TEXTURE, 0, 2, 0, BITMAP_EXTRACT_MODE_CELL);
 
 	// set up stating state of skelaton
 	Set_Animation_BOB32(&player, 0);
-	Set_Anim_Speed_BOB32(&player, 4);
+	Set_Anim_Speed_BOB32(&player, 2);
 	Set_Vel_BOB32(&player, 0, 0);
 	Set_Pos_BOB32(&player, 50, 50);
 
 
 	// create skelaton bob
 	for (int i = 0; i < MAX_USER; ++i) {
-		if (!Create_BOB32(&skelaton[i], 0, 0, 30, 30, 1, BOB_ATTR_SINGLE_FRAME))
+		if (!Create_BOB32(&skelaton[i], 0, 0, 32, 32, 1, BOB_ATTR_SINGLE_FRAME))
 			return(0);
 		Load_Frame_BOB32(&skelaton[i], UNIT_TEXTURE, 0, 0, 0, BITMAP_EXTRACT_MODE_CELL);
 
 		// set up stating state of skelaton
 		Set_Animation_BOB32(&skelaton[i], 0);
-		Set_Anim_Speed_BOB32(&skelaton[i], 4);
+		Set_Anim_Speed_BOB32(&skelaton[i], 2);
 		Set_Vel_BOB32(&skelaton[i], 0, 0);
 		Set_Pos_BOB32(&skelaton[i], 50, 50);
 	}
 
 	// create skelaton bob
 	for (int i = 0; i < MAX_NPC; ++i) {
-		if (!Create_BOB32(&npc[i], 0, 0, 30, 30, 1, BOB_ATTR_SINGLE_FRAME))
+		if (!Create_BOB32(&npc[i], 0, 0, 32, 32, 1, BOB_ATTR_SINGLE_FRAME))
 			return(0);
 		Load_Frame_BOB32(&npc[i], UNIT_TEXTURE, 0, 4, 0, BITMAP_EXTRACT_MODE_CELL);
 
 		// set up stating state of skelaton
 		Set_Animation_BOB32(&npc[i], 0);
-		Set_Anim_Speed_BOB32(&npc[i], 4);
+		Set_Anim_Speed_BOB32(&npc[i], 2);
 		Set_Vel_BOB32(&npc[i], 0, 0);
 		Set_Pos_BOB32(&npc[i], 0, 0);
 		// Set_ID(&npc[i], i);
@@ -498,8 +529,8 @@ int Game_Shutdown(void *parms)
 
 	// kill skelaton
 	for (int i = 0; i < MAX_USER; ++i) Destroy_BOB32(&skelaton[i]);
-	//for (int i = 0; i < MAX_NPC; ++i)
-	//	Destroy_BOB32(&npc[i]);
+	for (int i = 0; i < MAX_NPC; ++i)
+		Destroy_BOB32(&npc[i]);
 
 	// shutdonw directdraw
 	DD_Shutdown();
@@ -553,7 +584,7 @@ int Game_Main(void *parms)
 	// draw the skelaton
 	Draw_BOB32(&player);
 	for (int i = 0; i<MAX_USER; ++i) Draw_BOB32(&skelaton[i]);
-	// for (int i = NPC_START; i<MAX_NPC; ++i) Draw_BOB32(&npc[i]);
+	for (int i = 0; i < MAX_NPC; ++i) Draw_BOB32(&npc[i]);
 
 	// draw some text
 	wchar_t text[300];
