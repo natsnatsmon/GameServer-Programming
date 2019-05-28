@@ -12,37 +12,31 @@ WIN closesocket    : 소켓종료
 
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <iostream>
-#include <map>
-
 using namespace std;
-
 #include <winsock2.h>
 #include "protocol.h"
 #include <thread>
 #include <vector>
 #include <mutex>
 #include <unordered_set>
-#include <mutex>
+#include <queue>
+#include <chrono>
+using namespace chrono;
 
 
 #pragma comment(lib, "Ws2_32.lib")
 
 #define MAX_BUFFER        1024
 #define VIEW_RADIUS			8
-
-#define RECV				0
-#define SEND				1
-#define PLAYER_MOVE			2
-#define NPC_MOVE			3
-
-ULONG NPC_EVT = 1234;
+#define NPC_RADIUS			10
+enum EVENT_TYPE { EVT_MOVE, EVT_HEAL, EVT_RECV, EVT_SEND };
 
 // 오버랩드 구조체를 확장해서 쓰자
 struct OVER_EX{
 	WSAOVERLAPPED over;
 	WSABUF dataBuffer;
 	char messageBuffer[MAX_BUFFER];
-	char command;
+	EVENT_TYPE event_t;
 };
 
 class SOCKETINFO
@@ -64,7 +58,7 @@ public:
 		in_use = false;
 		over_ex.dataBuffer.len = MAX_BUFFER;
 		over_ex.dataBuffer.buf = over_ex.messageBuffer;
-		over_ex.command = RECV;
+		over_ex.event_t = EVT_RECV;
 	}
 };
 SOCKETINFO clients[MAX_USER];
@@ -73,6 +67,7 @@ SOCKETINFO clients[MAX_USER];
 class NPCINFO {
 public :
 	int x, y;
+	bool is_sleeping;
 };
 NPCINFO npcs[MAX_NPC];
 // 장점 : 메모리의 낭비가 없다. 직관적이다.
@@ -117,14 +112,29 @@ NPCINFO npcs[MAX_NPC];
 // 장점 : 포인터 사용X
 // 단점 : 어마어마한 메모리 낭비
 
-HANDLE g_iocp;
-//SOCKETINFO clients[MAX_USER];
+struct EVENT_ST {
+	int obj_id;
+	EVENT_TYPE type;
+	high_resolution_clock::time_point start_time;
+	constexpr bool operator < (const EVENT_ST& _Left)const {
+		return(start_time > _Left.start_time);
+	}
+};
 
-void Init();
+mutex timer_t;
+
+priority_queue<EVENT_ST> timer_queue;
+
+HANDLE g_iocp;
+
 void err_display(const char * msg, int err_no);
+void add_timer(int obj_id, EVENT_TYPE et, high_resolution_clock::time_point start_time);
+void Init();
 
 int do_accept();
+void do_timer();
 void do_recv(int id);
+
 void send_packet(int client, void *packet);
 
 void send_pos_packet(int client, int pl);
@@ -139,24 +149,30 @@ void send_put_player_packet(int clients, int new_id);
 void send_put_npc_packet(int clients, int npc);
 
 void process_packet(int client, char *packet);
+void process_event(EVENT_ST &ev);
+
 void disconnect_client(int id);
 
 void worker_thread();
-void timer_thread();
 
-void move_npc();
+void move_npc(int npc_id);
+void wakeup_NPC(int npc_id);
 
-bool is_eyesight(int client, int other_client);
-bool is_npc_eyesight(int client, int npc);
+bool is_eyesight(int client_id, int other_client_id);
+bool is_player_npc_eyesight(int client, int npc);
+bool is_npc_eyesight(int client_id, int npc_id);
+bool is_sleeping(int npc_id);
 
 //bool Is_Near_Object(int a, int b);
 
+
 int main() {
-	Init();
 
 	vector <thread> worker_threads;
 
 	wcout.imbue(locale("korean"));
+
+	Init();
 
 	g_iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, 0, 0, 0);
 	for (int i = 0; i < 4; ++i) {
@@ -164,19 +180,12 @@ int main() {
 	}
 
 	thread accept_thread{ do_accept };
-	thread npc_thread{ timer_thread };
+	thread timer_thread{ do_timer };
 	accept_thread.join();
-	npc_thread.join();
+	timer_thread.join();
 
 	for (auto &th : worker_threads) {
 		th.join();
-	}
-}
-
-void Init() {
-	for (auto &npc : npcs) {
-		npc.x = rand() % WORLD_WIDTH;
-		npc.y = rand() % WORLD_HEIGHT;
 	}
 }
 
@@ -193,6 +202,25 @@ void err_display(const char * msg, int err_no)
 	wcout << L"에러  [" << err_no << L"] " << lpMsgBuf << endl;
 	while (true);
 	LocalFree(lpMsgBuf);
+}
+
+void add_timer(int obj_id, EVENT_TYPE et, high_resolution_clock::time_point start_time) {
+	timer_t.lock();
+	timer_queue.emplace(EVENT_ST{ obj_id,et,start_time });
+	timer_t.unlock();
+}
+
+void Init() {
+	for (int pl_id = 0; pl_id < MAX_USER; ++pl_id) {
+		clients[pl_id].in_use = false;
+	}
+
+	for (int npc_id = 0; npc_id < MAX_NPC; ++npc_id) {
+		npcs[npc_id].x = rand() % WORLD_WIDTH;
+		npcs[npc_id].y = rand() % WORLD_HEIGHT;
+		npcs[npc_id].is_sleeping = true;
+		add_timer(npc_id, EVT_MOVE, high_resolution_clock::now() + 1s);
+	}
 }
 
 int do_accept()
@@ -278,7 +306,6 @@ int do_accept()
 		clients[new_id].viewlist.clear(); // 뷰리스트 초기화
 		ZeroMemory(&clients[new_id].over_ex.over, 
 			sizeof(clients[new_id].over_ex.over));
-		clients[new_id].over_ex.command = RECV;
 		flags = 0;
 
 		CreateIoCompletionPort(reinterpret_cast<HANDLE>(clientSocket), g_iocp, new_id, 0);
@@ -364,7 +391,7 @@ void send_packet(int client, void *packet) {
 	OVER_EX *ov = new OVER_EX;
 	ov->dataBuffer.len = p[0];
 	ov->dataBuffer.buf = ov->messageBuffer;
-	ov->command = SEND;
+	ov->event_t = EVT_SEND;
 	memcpy(ov->messageBuffer, p, p[0]);
 	ZeroMemory(&ov->over, sizeof(ov->over));
 
@@ -484,6 +511,7 @@ void process_packet(int client, char * packet) {
 
 	unordered_set <int> new_vl; // 이동 후의 새로운 뷰리스트
 	for (int i = 0; i < MAX_USER; ++i) {
+		if (false == clients[i].in_use) continue;
 		if (i == client) continue; // 나는 넘어가기
 		if (false == is_eyesight(i, client)) continue; // 안보이면 추가안함
 		new_vl.insert(i); // 이동 후에 보인 애들이 여기에 들어가있겠지.. 이걸로 비교하면 된다!
@@ -555,18 +583,18 @@ void process_packet(int client, char * packet) {
 	// npc 뷰리스트
 	unordered_set <int> new_npc_vl; // 이동 후의 새로운 뷰리스트
 	for (int i = 0; i < MAX_NPC; ++i) {
-		if (false == is_npc_eyesight(client, i)) continue;
+		if (false == is_player_npc_eyesight(client, i)) continue;
 		new_npc_vl.insert(i); // 이동 후에 보이는 npc들
 	}
 
 
 	// Case 1. old_vl, new_vl에 있는 npc
-	for (auto npc : old_npc_vl) {
-		if (0 == new_npc_vl.count(npc)) continue;
-		else { 
-			send_put_npc_packet(client, npc);
-		}
-	}
+//	for (auto npc : old_npc_vl) {
+//		if (0 == new_npc_vl.count(npc)) continue;
+//		else { 
+//			send_put_npc_packet(client, npc);
+//		}
+//	}
 
 	// Case 2. old_vl 에 없음, new_vl 에는 있음 -> 내 시야에 들어온거임~
 	for (auto npc : new_npc_vl) {
@@ -578,6 +606,8 @@ void process_packet(int client, char * packet) {
 		clients[client].myLock.unlock();
 
 		send_put_npc_packet(client, npc);
+
+		wakeup_NPC(npc);
 	}
 
 	// Case 3. old_vl에 있었는데 new_vl에는 없는 경우 -> 내 시야에서 사라진 경우
@@ -591,6 +621,36 @@ void process_packet(int client, char * packet) {
 		send_remove_npc_packet(client, npc);
 	}
 
+}
+
+void process_event(EVENT_ST &ev) {
+	bool player_is_near = false;
+	switch (ev.type) {
+	case EVT_MOVE:
+		player_is_near = false;
+		for (int i = 0; i < MAX_USER; ++i) {
+			if (false == clients[i].in_use) continue;
+			if (false == is_npc_eyesight(i, ev.obj_id)) continue;
+
+			player_is_near = true;
+			break;
+		}
+
+		if (player_is_near) {
+			move_npc(ev.obj_id);
+			add_timer(ev.obj_id, EVT_MOVE, high_resolution_clock::now() + 1s);
+		}
+		else {
+			npcs[ev.obj_id].is_sleeping = true;
+		}
+		break;
+	case EVT_HEAL: break;
+	case EVT_RECV: break;
+	case EVT_SEND:break;
+
+	default:
+		break;
+	}
 }
 
 void disconnect_client(int id) {
@@ -615,9 +675,8 @@ void worker_thread() {
 	while (true) {
 		DWORD io_byte;
 		ULONGLONG l_key;
-		OVER_EX *over_ex = new OVER_EX;
+		OVER_EX *over_ex;
 
-//		WSAOVERLAPPED *over;
 
 		// IOCP는 worker_thread가 recv용, send용이 따로 나뉘지 않는다.. 그럼 어떻게 구분하냐..?
 		// 우리가 만든 오버랩드 확장 구조체의 포인터인 over를 통해서 알수있다!!~~!~!!!
@@ -629,7 +688,10 @@ void worker_thread() {
 		// 1. 클라가 closesocket하지 않고 종료한 경우
 		if (0 == is_error) {
 			int err_no = WSAGetLastError();
-			if (64 == err_no) disconnect_client(key);
+			if (64 == err_no) {
+				disconnect_client(key);
+				continue;
+			}
 			else err_display("GQCS : ", err_no);
 		}
 
@@ -639,17 +701,17 @@ void worker_thread() {
 		}
 
 
-		// npc 이동하라는 커맨드면
-		if (l_key == NPC_EVT) {
-			if (over_ex->command == NPC_MOVE) {
-				move_npc();
-				cout << npcs[0].x << ", " << npcs[0].y << '\n';
-				cout << npcs[10].x << ", " << npcs[10].y << '\n';
-				cout << npcs[100].x << ", " << npcs[100].y << '\n';
-			}
-		}
+		//// npc 이동하라는 커맨드면
+		//if (l_key == NPC_EVT) {
+		//	if (over_ex->command == NPC_MOVE) {
+		//		move_npc();
+		//		cout << npcs[0].x << ", " << npcs[0].y << '\n';
+		//		cout << npcs[10].x << ", " << npcs[10].y << '\n';
+		//		cout << npcs[100].x << ", " << npcs[100].y << '\n';
+		//	}
+		//}
 
-		if (RECV == over_ex->command) {
+		if (EVT_RECV == over_ex->event_t) {
 			// RECV
 //			wcout << "Packet from Client : " << key << endl;
 
@@ -669,7 +731,7 @@ void worker_thread() {
 				}
 				// 패킷을 완성하려면 앞으로 몇 바이트 더 받아와야하냐?
 				int required = packet_size - clients[key].prev_size;
-				
+
 				// 패킷을 만들 수 있으면
 				if (required <= rest) {
 					// 앞에 이전 데이터가 존재한다면 덮어쓰게 되니까 추가하는거임
@@ -688,90 +750,139 @@ void worker_thread() {
 			}
 			do_recv(key);
 		}
+		else if (EVT_SEND == over_ex->event_t) {
+			if (false == over_ex->event_t)
+			delete over_ex;
+			}
+		else if (EVT_MOVE) {
+			EVENT_ST ev;
+			ev.obj_id = key;
+			ev.start_time = high_resolution_clock::now();
+			ev.type = EVT_MOVE;
+
+			process_event(ev);
+			delete over_ex;
+		}
 		else {
-			if(SEND == over_ex->command)
-				delete over_ex;
+			cout << "UNKNOWN EVENT\n";
+			while (true);
 		}
 	}
 }
 
-
-void timer_thread() {
+void do_timer() {
 	while (true) {
-		Sleep(1000);
-		ULONG l_key = NPC_EVT;
-		OVER_EX* ov = new OVER_EX;
+		this_thread::sleep_for(10ms);
+		while (true) {
+			timer_t.lock();
 
-		ZeroMemory(&ov->over, sizeof(ov->over));
-		ov->command = NPC_MOVE;
-		ov->dataBuffer.len = 0;
-		ov->dataBuffer.buf = 0;
-		ov->command = NPC_MOVE;
+			if (true == timer_queue.empty()) {
+				timer_t.unlock();
+				break;
+			}
 
-		PostQueuedCompletionStatus(g_iocp, 1, l_key, &ov->over);
+			EVENT_ST ev = timer_queue.top();
+
+			if (ev.start_time < high_resolution_clock::now()) {
+				timer_t.unlock();
+				break;
+			}
+
+			timer_queue.pop();
+			timer_t.unlock();
+
+			OVER_EX *over_ex = new OVER_EX;
+			over_ex->event_t = EVT_MOVE;
+			PostQueuedCompletionStatus(g_iocp, 1, ev.obj_id, &over_ex->over);
+		}
 	}
 }
 
-void move_npc() {
-	for (int client = 0; client < MAX_USER; ++client) {
-		if (false == clients[client].in_use) continue;
-		auto old_npc_vl = clients[client].npc_viewlist;
+void move_npc(int npc_id) {
+	int x = npcs[npc_id].x;
+	int y = npcs[npc_id].y;
 
-		cout << "move npc\n";
-		for (int i = 0; i < MAX_NPC; ++i) {
-			switch (rand() % 4 + 1) {
-			case 1: if (npcs[i].y > 0) npcs[i].y--; break;
-			case 2: if (npcs[i].y < (WORLD_HEIGHT - 1)) npcs[i].y++; break;
-			case 3: if (npcs[i].x > 0) npcs[i].x--; break;
-			case 4: if (npcs[i].x < (WORLD_WIDTH - 1)) npcs[i].x++; break;
-			default: break;
+	unordered_set<int> old_vl;
+	for (int i = 0; i < MAX_USER; ++i) {
+		if (false == clients[i].in_use) continue;
+		if (false == is_npc_eyesight(i, npc_id)) continue;
+		old_vl.insert(i);
+	}
+
+	cout << "move npc\n";
+
+	switch (rand() % 4 + 1) {
+	case 1: if (y > 0) y--; break;
+	case 2: if (y < (WORLD_HEIGHT - 1)) y++; break;
+	case 3: if (x > 0) x--; break;
+	case 4: if (x < (WORLD_WIDTH - 1)) x++; break;
+	default: break;
+	}
+
+	npcs[npc_id].x = x;
+	npcs[npc_id].y = y;
+
+	unordered_set<int> new_vl;
+
+	for (int i = 0; i < MAX_USER; ++i) {
+		if (false == clients[i].in_use) continue;
+		if (false == is_npc_eyesight(i, npc_id)) continue;
+		new_vl.insert(i);
+	}
+
+	// 새로 만난 플레이어, 계속 오는 플레이어 처리
+	for (auto &pl : new_vl) {
+		if (0 == old_vl.count(pl)) continue;
+		if (0 == clients[pl].npc_viewlist.count(npc_id)) {
+			clients[pl].myLock.lock();
+			clients[pl].npc_viewlist.insert(npc_id);
+			clients[pl].myLock.unlock();
+
+			send_put_npc_packet(pl, npc_id);
+		}
+		else send_npc_pos_packet(pl, npc_id);
+	}
+
+	// 헤어진 플레이어 처리
+	for (auto &pl : old_vl) {
+		if (0 == new_vl.count(pl)) {
+			if (0 < clients[pl].npc_viewlist.count(npc_id)) {
+				clients[pl].npc_viewlist.erase(npc_id);
+				send_remove_npc_packet(pl, npc_id);
 			}
-		}
-
-		unordered_set <int> new_npc_vl; // 이동 후의 새로운 뷰리스트
-		for (int i = 0; i < MAX_NPC; ++i) {
-			if (false == is_npc_eyesight(client, i)) continue;
-			new_npc_vl.insert(i); // 이동 후에 보이는 npc들
-		}
-
-
-		// Case 1. old_vl, new_vl에 있는 npc
-		for (auto npc : old_npc_vl) {
-			if (0 == new_npc_vl.count(npc)) continue;
-			else {
-				send_put_npc_packet(client, npc);
-			}
-		}
-
-		// Case 2. old_vl 에 없음, new_vl 에는 있음 -> 내 시야에 들어온거임~
-		for (auto npc : new_npc_vl) {
-			if (0 < old_npc_vl.count(npc)) continue; // 옛날 뷰리스트에 있으면 통과~
-
-			// 없으면 내 뷰리스트에 추가해주자
-			clients[client].myLock.lock();
-			clients[client].npc_viewlist.insert(npc);
-			clients[client].myLock.unlock();
-
-			send_put_npc_packet(client, npc);
-		}
-
-		// Case 3. old_vl에 있었는데 new_vl에는 없는 경우 -> 내 시야에서 사라진 경우
-		for (auto npc : old_npc_vl) {
-			if (0 < new_npc_vl.count(npc)) continue; // 새로운 리스트에 있으면 넘어가~
-
-			clients[client].myLock.lock();
-			clients[client].npc_viewlist.erase(npc);
-			clients[client].myLock.unlock();
-
-			send_remove_npc_packet(client, npc);
 		}
 	}
 
+}
+
+void wakeup_NPC(int npc_id) {
+	if (true == is_sleeping(npc_id)) {
+		npcs[npc_id].is_sleeping = false;
+		EVENT_ST ev;
+		
+		ev.obj_id = npc_id;
+		ev.type = EVT_MOVE;
+		ev.start_time = high_resolution_clock::now() + 1s;
+	
+		timer_t.lock();
+		timer_queue.push(ev);
+		timer_t.unlock();
+	}
 }
 
 bool is_eyesight(int client, int other_client) {
 	int x = clients[client].x - clients[other_client].x;
 	int y = clients[client].y - clients[other_client].y;
+
+	int distance = (x * x) + (y * y);
+
+	if (distance < (VIEW_RADIUS * VIEW_RADIUS)) return true;
+	else return false;
+}
+
+bool is_player_npc_eyesight(int client, int npc) {
+	int x = clients[client].x - npcs[npc].x;
+	int y = clients[client].y - npcs[npc].y;
 
 	int distance = (x * x) + (y * y);
 
@@ -785,6 +896,10 @@ bool is_npc_eyesight(int client, int npc) {
 
 	int distance = (x * x) + (y * y);
 
-	if (distance < (VIEW_RADIUS * VIEW_RADIUS)) return true;
+	if (distance < (NPC_RADIUS * NPC_RADIUS)) return true;
 	else return false;
+}
+
+bool is_sleeping(int npc_id) {
+	return npcs[npc_id].is_sleeping;
 }
