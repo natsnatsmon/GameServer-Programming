@@ -28,7 +28,7 @@ using namespace chrono;
 
 #define MAX_BUFFER        1024
 #define VIEW_RADIUS			8
-#define NPC_RADIUS			10
+#define NPC_RADIUS			9
 enum EVENT_TYPE { EVT_MOVE, EVT_HEAL, EVT_RECV, EVT_SEND };
 
 // 오버랩드 구조체를 확장해서 쓰자
@@ -121,7 +121,7 @@ struct EVENT_ST {
 	}
 };
 
-mutex timer_t;
+mutex timer_lock;
 
 priority_queue<EVENT_ST> timer_queue;
 
@@ -205,9 +205,9 @@ void err_display(const char * msg, int err_no)
 }
 
 void add_timer(int obj_id, EVENT_TYPE et, high_resolution_clock::time_point start_time) {
-	timer_t.lock();
+	timer_lock.lock();
 	timer_queue.emplace(EVENT_ST{ obj_id,et,start_time });
-	timer_t.unlock();
+	timer_lock.unlock();
 }
 
 void Init() {
@@ -219,7 +219,7 @@ void Init() {
 		npcs[npc_id].x = rand() % WORLD_WIDTH;
 		npcs[npc_id].y = rand() % WORLD_HEIGHT;
 		npcs[npc_id].is_sleeping = true;
-		add_timer(npc_id, EVT_MOVE, high_resolution_clock::now() + 1s);
+		//add_timer(npc_id, EVT_MOVE, high_resolution_clock::now() + 1s);
 	}
 }
 
@@ -345,13 +345,15 @@ int do_accept()
 
 		// 내 주변에 있는 NPC를 뷰리스트에 추가
 		for (int i = 0; i < MAX_NPC; ++i) {
-			if (false == is_npc_eyesight(new_id, i)) continue;
+			if (false == is_player_npc_eyesight(new_id, i)) continue;
 
 			clients[new_id].myLock.lock();
 			clients[new_id].npc_viewlist.insert(i);
 			clients[new_id].myLock.unlock();
 
 			send_put_npc_packet(new_id, i);
+
+			wakeup_NPC(i);
 		}
 
 		do_recv(new_id);
@@ -521,7 +523,7 @@ void process_packet(int client, char * packet) {
 
 	// 3가지 Case가 있다
 	// Case 1. old_vl 에도 있고 new_vl에도 있는 플레이어 -> Send packet~
-	for (auto player : old_vl) {
+	for (auto &player : old_vl) {
 		if (0 == new_vl.count(player)) continue; // 뉴 리스트에 없으면 넘어가~
 		if (0 < clients[player].viewlist.count(client)) { // 상대방 뷰리스트에 나도 있으면 걍 보내기~
 			send_pos_packet(player, client);
@@ -536,7 +538,7 @@ void process_packet(int client, char * packet) {
 	}
 
 	// Case 2. old_vl 에 없음, new_vl 에는 있음 -> 내 시야에 들어온거임~
-	for (auto player : new_vl) {
+	for (auto &player : new_vl) {
 		if (0 < old_vl.count(player)) continue; // 옛날 뷰리스트에 상대방이 있으면 통과~
 
 		// 없으면 내 뷰리스트에 추가해주자
@@ -560,7 +562,7 @@ void process_packet(int client, char * packet) {
 	}
 
 	// Case 3. old_vl에 있었는데 new_vl에는 없는 경우 -> 내 시야에서 사라진 경우
-	for (auto player : old_vl) {
+	for (auto &player : old_vl) {
 		if (0 < new_vl.count(player)) continue; // 새로운 리스트에 상대방 있으면 넘어가~
 
 		clients[client].myLock.lock();
@@ -589,15 +591,22 @@ void process_packet(int client, char * packet) {
 
 
 	// Case 1. old_vl, new_vl에 있는 npc
-//	for (auto npc : old_npc_vl) {
-//		if (0 == new_npc_vl.count(npc)) continue;
+	for (auto &npc : old_npc_vl) {
+		// 옛날 시야에는 있었지만 새로운 시야에 없으면
+		if (0 == new_npc_vl.count(npc)) {
+			clients[client].myLock.lock();
+			clients[client].npc_viewlist.erase(npc);
+			clients[client].myLock.unlock();
+
+			send_remove_npc_packet(client, npc);
+		}
 //		else { 
 //			send_put_npc_packet(client, npc);
 //		}
-//	}
+	}
 
 	// Case 2. old_vl 에 없음, new_vl 에는 있음 -> 내 시야에 들어온거임~
-	for (auto npc : new_npc_vl) {
+	for (auto &npc : new_npc_vl) {
 		if (0 < old_npc_vl.count(npc)) continue; // 옛날 뷰리스트에 있으면 통과~
 
 		// 없으면 내 뷰리스트에 추가해주자
@@ -610,20 +619,10 @@ void process_packet(int client, char * packet) {
 		wakeup_NPC(npc);
 	}
 
-	// Case 3. old_vl에 있었는데 new_vl에는 없는 경우 -> 내 시야에서 사라진 경우
-	for (auto npc : old_npc_vl) {
-		if (0 < new_npc_vl.count(npc)) continue; // 새로운 리스트에 있으면 넘어가~
-
-		clients[client].myLock.lock();
-		clients[client].npc_viewlist.erase(npc);
-		clients[client].myLock.unlock();
-
-		send_remove_npc_packet(client, npc);
-	}
-
 }
 
 void process_event(EVENT_ST &ev) {
+
 	bool player_is_near = false;
 	switch (ev.type) {
 	case EVT_MOVE:
@@ -682,7 +681,7 @@ void worker_thread() {
 		// 우리가 만든 오버랩드 확장 구조체의 포인터인 over를 통해서 알수있다!!~~!~!!!
 		int is_error = GetQueuedCompletionStatus(g_iocp, &io_byte, &l_key, reinterpret_cast<LPOVERLAPPED *>(&over_ex), INFINITE);
 
-		char key = static_cast<char>(l_key);
+		int key = static_cast<int>(l_key);
 
 		// 에러 2가지 경우
 		// 1. 클라가 closesocket하지 않고 종료한 경우
@@ -700,16 +699,6 @@ void worker_thread() {
 			disconnect_client(key);
 		}
 
-
-		//// npc 이동하라는 커맨드면
-		//if (l_key == NPC_EVT) {
-		//	if (over_ex->command == NPC_MOVE) {
-		//		move_npc();
-		//		cout << npcs[0].x << ", " << npcs[0].y << '\n';
-		//		cout << npcs[10].x << ", " << npcs[10].y << '\n';
-		//		cout << npcs[100].x << ", " << npcs[100].y << '\n';
-		//	}
-		//}
 
 		if (EVT_RECV == over_ex->event_t) {
 			// RECV
@@ -754,12 +743,13 @@ void worker_thread() {
 			if (false == over_ex->event_t)
 			delete over_ex;
 			}
-		else if (EVT_MOVE) {
+		else if (EVT_MOVE == over_ex->event_t) {
 			EVENT_ST ev;
 			ev.obj_id = key;
 			ev.start_time = high_resolution_clock::now();
 			ev.type = EVT_MOVE;
 
+		//	cout << "EVT_MOVE " << ev.obj_id << '\n';
 			process_event(ev);
 			delete over_ex;
 		}
@@ -774,22 +764,22 @@ void do_timer() {
 	while (true) {
 		this_thread::sleep_for(10ms);
 		while (true) {
-			timer_t.lock();
-
+			timer_lock.lock();
 			if (true == timer_queue.empty()) {
-				timer_t.unlock();
+				timer_lock.unlock();
 				break;
 			}
 
 			EVENT_ST ev = timer_queue.top();
 
 			if (ev.start_time < high_resolution_clock::now()) {
-				timer_t.unlock();
+				timer_lock.unlock();
 				break;
 			}
 
+
 			timer_queue.pop();
-			timer_t.unlock();
+			timer_lock.unlock();
 
 			OVER_EX *over_ex = new OVER_EX;
 			over_ex->event_t = EVT_MOVE;
@@ -802,6 +792,7 @@ void move_npc(int npc_id) {
 	int x = npcs[npc_id].x;
 	int y = npcs[npc_id].y;
 
+	// npc의 시야에 들어오는 플레이어~~
 	unordered_set<int> old_vl;
 	for (int i = 0; i < MAX_USER; ++i) {
 		if (false == clients[i].in_use) continue;
@@ -809,7 +800,7 @@ void move_npc(int npc_id) {
 		old_vl.insert(i);
 	}
 
-	cout << "move npc\n";
+//	cout << "move npc\n";
 
 	switch (rand() % 4 + 1) {
 	case 1: if (y > 0) y--; break;
@@ -824,28 +815,35 @@ void move_npc(int npc_id) {
 
 	unordered_set<int> new_vl;
 
+	// 이동 후 npc 시야에 들어오는 플레이어~~
 	for (int i = 0; i < MAX_USER; ++i) {
 		if (false == clients[i].in_use) continue;
 		if (false == is_npc_eyesight(i, npc_id)) continue;
 		new_vl.insert(i);
 	}
 
-	// 새로 만난 플레이어, 계속 오는 플레이어 처리
+	// 새로 만난 플레이어, 계속 있는 플레이어 처리
 	for (auto &pl : new_vl) {
-		if (0 == old_vl.count(pl)) continue;
-		if (0 == clients[pl].npc_viewlist.count(npc_id)) {
-			clients[pl].myLock.lock();
-			clients[pl].npc_viewlist.insert(npc_id);
-			clients[pl].myLock.unlock();
+		// 만약 이동 전 뷰리스트에 플레이어가 없다면
+		if (0 == old_vl.count(pl)) {
+			// 그 플레이어 뷰리스트에 내가 있는지 확인하고 없으면 넣어주기
+			if (0 == clients[pl].npc_viewlist.count(npc_id)) {
+				clients[pl].myLock.lock();
+				clients[pl].npc_viewlist.insert(npc_id);
+				clients[pl].myLock.unlock();
 
-			send_put_npc_packet(pl, npc_id);
+				send_put_npc_packet(pl, npc_id);
+			}
+			else send_npc_pos_packet(pl, npc_id);
 		}
 		else send_npc_pos_packet(pl, npc_id);
 	}
 
 	// 헤어진 플레이어 처리
 	for (auto &pl : old_vl) {
+		// 새로운 뷰리스트에 없는 플레이어는
 		if (0 == new_vl.count(pl)) {
+			// 그 플레이어의 뷰리스트에 내가 있는지 확인하고 있으면 지워주기
 			if (0 < clients[pl].npc_viewlist.count(npc_id)) {
 				clients[pl].npc_viewlist.erase(npc_id);
 				send_remove_npc_packet(pl, npc_id);
@@ -864,9 +862,7 @@ void wakeup_NPC(int npc_id) {
 		ev.type = EVT_MOVE;
 		ev.start_time = high_resolution_clock::now() + 1s;
 	
-		timer_t.lock();
-		timer_queue.push(ev);
-		timer_t.unlock();
+		add_timer(ev.obj_id, ev.type, ev.start_time);
 	}
 }
 
