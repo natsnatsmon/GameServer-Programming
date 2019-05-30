@@ -77,14 +77,19 @@ int main() {
 
 					retcode = SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt);
 
+
+					// 여기를 봐라~!!~!!!!!!!!!!!!!!!!1
 					// SQLExecDirect하면 SQL 명령어가 실행됨
-					retcode = SQLExecDirect(hstmt, (SQLWCHAR *)L"SELECT user_id, user_name, user_level FROM user_table ORDER BY 2, 1, 3", SQL_NTS);
+					// EXEC 하고 내장함수 이름, 파라미터 주면 실행된다!!!!
+					retcode = SQLExecDirect(hstmt, (SQLWCHAR *)L"EXEC select_highlevel 100", SQL_NTS);
+
+//					retcode = SQLExecDirect(hstmt, (SQLWCHAR *)L"SELECT user_id, user_name, user_level FROM user_table ORDER BY 2, 1, 3", SQL_NTS);
 					if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
 
 						// Bind columns 1, 2, and 3  
-						retcode = SQLBindCol(hstmt, 1, SQL_INTEGER, &uid, 100, &cb_uid);
-						retcode = SQLBindCol(hstmt, 2, SQL_C_CHAR, uname, NAME_LEN, &cb_uname);
-						retcode = SQLBindCol(hstmt, 3, SQL_INTEGER, &ulevel, 10, &cb_ulevel);
+						//retcode = SQLBindCol(hstmt, 1, SQL_INTEGER, &uid, 100, &cb_uid);
+						retcode = SQLBindCol(hstmt, 1, SQL_C_CHAR, uname, NAME_LEN, &cb_uname);
+						retcode = SQLBindCol(hstmt, 2, SQL_INTEGER, &ulevel, 10, &cb_ulevel);
 
 						// Fetch and print each row of data. On an error, display a message and exit.  
 						for (int i = 0; ; i++) {
@@ -93,7 +98,7 @@ int main() {
 							if (retcode == SQL_ERROR || retcode == SQL_SUCCESS_WITH_INFO)
 								show_error();
 							if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO)
-								wprintf(L"%d: %d %S %d\n", i + 1, uid, uname, ulevel);
+								wprintf(L"%d: %S %d\n", i + 1, uname, ulevel);
 							else // EOF일때..! EOD일수도 (End Of File / End Of Data)
 								break;
 						}
