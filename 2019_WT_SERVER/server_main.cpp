@@ -22,6 +22,11 @@ using namespace std;
 #include <queue>
 #include <chrono>
 using namespace chrono;
+#include <windows.h>  
+#include <stdio.h>  
+#define UNICODE  
+#include <sqlext.h>  
+
 
 
 #pragma comment(lib, "Ws2_32.lib")
@@ -128,11 +133,13 @@ priority_queue<EVENT_ST> timer_queue;
 HANDLE g_iocp;
 
 void err_display(const char * msg, int err_no);
+void db_err_display(const char * msg, int err_no);
 void add_timer(int obj_id, EVENT_TYPE et, high_resolution_clock::time_point start_time);
 void Init();
 
 int do_accept();
 void do_timer();
+void do_transaction();
 void do_recv(int id);
 
 void send_packet(int client, void *packet);
@@ -181,8 +188,10 @@ int main() {
 
 	thread accept_thread{ do_accept };
 	thread timer_thread{ do_timer };
+	thread db_thread{ do_transaction };
 	accept_thread.join();
 	timer_thread.join();
+	db_thread.join();
 
 	for (auto &th : worker_threads) {
 		th.join();
@@ -202,6 +211,24 @@ void err_display(const char * msg, int err_no)
 	wcout << L"에러  [" << err_no << L"] " << lpMsgBuf << endl;
 	while (true);
 	LocalFree(lpMsgBuf);
+}
+void db_err_display(SQLHANDLE hHandle, SQLSMALLINT hType, RETCODE RetCode)
+{
+	SQLSMALLINT iRec = 0;
+	SQLINTEGER iError;
+	WCHAR wszMessage[1000];
+	WCHAR wszState[SQL_SQLSTATE_SIZE + 1];
+	if (RetCode == SQL_INVALID_HANDLE) {
+		fwprintf(stderr, L"Invalid handle!\n");
+		return;
+	}
+	while (SQLGetDiagRec(hType, hHandle, ++iRec, wszState, &iError, wszMessage,
+		(SQLSMALLINT)(sizeof(wszMessage) / sizeof(WCHAR)), (SQLSMALLINT *)NULL) == SQL_SUCCESS) {
+		// Hide data truncated..
+		if (wcsncmp(wszState, L"01004", 5)) {
+			fwprintf(stderr, L"[%5.5s] %s (%d)\n", wszState, wszMessage, iError);
+		}
+	}
 }
 
 void add_timer(int obj_id, EVENT_TYPE et, high_resolution_clock::time_point start_time) {
@@ -312,6 +339,8 @@ int do_accept()
 
 		clients[new_id].in_use = true; // IOCP에 등록 한 다음 true로 바꿔줘야 데이터를 받을 수 있당
 
+		// 여기에 id 확인을 추가합시닷
+
 		send_login_ok_packet(new_id);
 		send_put_player_packet(new_id, new_id); // 나한테 내 위치 보내기
 
@@ -385,6 +414,88 @@ void do_recv(int id) {
 		cout << "Non Overlapped Recv return.\n";
 	}
 
+}
+
+void do_transaction() {
+	SQLHENV henv;
+	SQLHDBC hdbc;
+	SQLHSTMT hstmt = 0;
+	SQLRETURN retcode;
+
+	SQLINTEGER uid, ulevel;
+	SQLWCHAR uname[20];
+	SQLLEN cb_uid = 0, cb_uname = 0, cb_ulevel = 0;
+
+	setlocale(LC_ALL, "korean");
+
+	// Allocate environment handle  
+	retcode = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &henv);
+
+	// Set the ODBC version environment attribute  
+	if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+		retcode = SQLSetEnvAttr(henv, SQL_ATTR_ODBC_VERSION, (SQLPOINTER*)SQL_OV_ODBC3, 0);
+
+		// Allocate connection handle  
+		if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+			retcode = SQLAllocHandle(SQL_HANDLE_DBC, henv, &hdbc);
+
+			// Set login timeout to 5 seconds  
+			if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+				SQLSetConnectAttr(hdbc, SQL_LOGIN_TIMEOUT, (SQLPOINTER)5, 0);
+
+				// Connect to data source  
+				retcode = SQLConnect(hdbc, (SQLWCHAR*)L"2019_WT_GS", SQL_NTS, (SQLWCHAR*)NULL, 0, NULL, 0);
+
+				// Allocate statement handle  
+				if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+					cout << "SQL DB Connect OK!!\n";
+
+					retcode = SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt);
+
+
+					// 여기를 봐라~!!~!!!!!!!!!!!!!!!!1
+					// SQLExecDirect하면 SQL 명령어가 실행됨
+					// EXEC 하고 내장함수 이름, 파라미터 주면 실행된다!!!!
+					retcode = SQLExecDirect(hstmt, (SQLWCHAR *)L"EXEC select_highlevel 100", SQL_NTS);
+
+					//					retcode = SQLExecDirect(hstmt, (SQLWCHAR *)L"SELECT user_id, user_name, user_level FROM user_table ORDER BY 2, 1, 3", SQL_NTS);
+					if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+
+						// Bind columns 1, 2, and 3  
+						//retcode = SQLBindCol(hstmt, 1, SQL_INTEGER, &uid, 100, &cb_uid);
+						retcode = SQLBindCol(hstmt, 1, SQL_C_CHAR, uname, 20, &cb_uname);
+						retcode = SQLBindCol(hstmt, 2, SQL_INTEGER, &ulevel, 10, &cb_ulevel);
+
+						// Fetch and print each row of data. On an error, display a message and exit.  
+						for (int i = 0; ; i++) {
+							// SQLFetch로 꺼낸다
+							retcode = SQLFetch(hstmt);
+							if (retcode == SQL_ERROR || retcode == SQL_SUCCESS_WITH_INFO)
+								printf("error\n");
+							if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO)
+								wprintf(L"%d: %S %d\n", i + 1, uname, ulevel);
+							else // EOF일때..! EOD일수도 (End Of File / End Of Data)
+								break;
+						}
+					}
+					else {
+						db_err_display(hstmt, SQL_HANDLE_STMT, retcode);
+					}
+
+					// Process data  
+					if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+						SQLCancel(hstmt);
+						SQLFreeHandle(SQL_HANDLE_STMT, hstmt);
+					}
+
+					SQLDisconnect(hdbc);
+				}
+
+				SQLFreeHandle(SQL_HANDLE_DBC, hdbc);
+			}
+		}
+		SQLFreeHandle(SQL_HANDLE_ENV, henv);
+	}
 }
 
 void send_packet(int client, void *packet) {
@@ -490,8 +601,13 @@ void send_put_npc_packet(int client, int npc) {
 }
 
 void process_packet(int client, char * packet) {
-	cs_packet_up *p = reinterpret_cast<cs_packet_up *>(packet);
+	//cs_packet_id *idp = reinterpret_cast<cs_packet_id *>(packet);
+	//if (idp->type == CS_ID) {
+	//	cout << "접속 요청 id : " << idp->id << '\n';
+	//}
 
+	cs_packet_id *p = reinterpret_cast<cs_packet_id *>(packet);
+	
 	int x = clients[client].x;
 	int y = clients[client].y;
 
@@ -503,9 +619,10 @@ void process_packet(int client, char * packet) {
 	case CS_DOWN: if(y < (WORLD_HEIGHT - 1)) y++; break;
 	case CS_LEFT: if(x > 0) x--; break;
 	case CS_RIGHT: if (x < (WORLD_WIDTH - 1)) x++; break;
+	case CS_ID: wcout << L"접속 요청 ID : " << p->id << '\n'; break;
 	default:
 		wcout << L"정의되지 않은 패킷 도착 오류!!\n";
-		while (true);
+		//while (true);
 	}
 
 	clients[client].x = x;

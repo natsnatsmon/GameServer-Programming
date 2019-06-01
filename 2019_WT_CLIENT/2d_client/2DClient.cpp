@@ -5,11 +5,13 @@
 #define WIN32_LEAN_AND_MEAN  
 #define INITGUID
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
+#define _CRT_SECURE_NO_WARNINGS
 
 #include <WinSock2.h>
 #include <windows.h>   // include important windows stuff
 #include <windowsx.h>
 #include <stdio.h>
+#include "resource.h"
 
 #include <d3d9.h>     // directX includes
 #include "d3dx9tex.h"     // directX includes
@@ -41,6 +43,7 @@ int Game_Main(void *parms = NULL);
 
 // GLOBALS ////////////////////////////////////////////////
 
+HWND hIdInputBox, hSendButton;
 HWND main_window_handle = NULL; // save the window handle
 HINSTANCE main_instance = NULL; // save the instance
 char buffer[80];                // used to print text
@@ -54,11 +57,12 @@ BITMAP_IMAGE reactor;      // the background
 
 BITMAP_IMAGE black_tile;
 BITMAP_IMAGE white_tile;
-#define TILE_WIDTH 32
 
+#define TILE_WIDTH 32
 #define UNIT_TEXTURE  0
 
-SOCKET g_mysocket;
+char cl_id[20];
+SOCKET  g_mysocket;
 WSABUF	send_wsabuf;
 char 	send_buffer[BUF_SIZE];
 WSABUF	recv_wsabuf;
@@ -234,6 +238,56 @@ void clienterror()
 	exit(-1);
 }
 
+BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+	static wchar_t buf[21];
+	int buf_len = 0;
+	cs_packet_id *my_packet = reinterpret_cast<cs_packet_id *>(send_buffer);
+	int ret = 0;
+
+	switch (uMsg) {
+	case WM_INITDIALOG:
+		hIdInputBox = GetDlgItem(hDlg, IDC_EDIT1);
+		hSendButton = GetDlgItem(hDlg, IDOK);
+		SendMessage(hIdInputBox, EM_SETLIMITTEXT, 20, 0);
+		return TRUE;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDOK:
+			GetDlgItemText(hDlg, IDC_EDIT1, buf, 21);
+			SetFocus(hIdInputBox);
+			ZeroMemory(cl_id, 20);
+			
+			buf_len = (int)wcslen(buf);
+			wcstombs(cl_id, buf, buf_len + 1);
+
+			// 立加 夸没 焊郴具达
+			DWORD iobyte;
+			my_packet->size = sizeof(cs_packet_id);
+			send_wsabuf.len = sizeof(cs_packet_id);
+			my_packet->type = CS_ID;
+			ZeroMemory(my_packet->id, 20);
+			strcpy(my_packet->id, cl_id);
+
+			ret = WSASend(g_mysocket, &send_wsabuf, 1, &iobyte, 0, NULL, NULL);
+			if (ret) {
+				int error_code = WSAGetLastError();
+				printf("Error while sending packet [%d]", error_code);
+			}
+
+			SendMessage(hIdInputBox, EM_SETSEL, 0, -1);
+			return TRUE;
+
+		case IDCANCEL:
+			EndDialog(hDlg, IDCANCEL);
+			return TRUE;
+		}
+		return FALSE;
+	}
+	return FALSE;
+}
+
+
 LRESULT CALLBACK WindowProc(HWND hwnd,
 	UINT msg,
 	WPARAM wparam,
@@ -277,6 +331,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd,
 	case WM_CREATE:
 	{
 		// do initialization stuff here
+
 		return(0);
 	} break;
 
@@ -373,6 +428,8 @@ int WINAPI WinMain(HINSTANCE hinstance,
 
 	// perform all game console specific initialization
 	Game_Init();
+
+	DialogBox(hinstance, MAKEINTRESOURCE(IDD_DIALOG1), NULL, DlgProc);
 
 	// enter main event loop
 	while (1)
@@ -488,7 +545,6 @@ int Game_Init(void *parms)
 	// hide the mouse
 	//ShowCursor(FALSE);
 
-
 	WSADATA	wsadata;
 	WSAStartup(MAKEWORD(2, 2), &wsadata);
 
@@ -509,6 +565,7 @@ int Game_Init(void *parms)
 	recv_wsabuf.buf = recv_buffer;
 	recv_wsabuf.len = BUF_SIZE;
 
+	
 
 	// return success
 	return(1);

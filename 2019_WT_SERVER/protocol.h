@@ -8,12 +8,19 @@ constexpr int MAX_NPC = 200000;
 
 constexpr int SERVER_PORT = 3500;
 
+constexpr int CS_ID		= 0;
 constexpr int CS_UP		= 1;
 constexpr int CS_DOWN	= 2;
 constexpr int CS_LEFT	= 3;
 constexpr int CS_RIGHT	= 4;
 
 #pragma pack(push, 1)
+
+struct cs_packet_id {
+	char size;
+	char type;
+	char id[20];
+};
 
 struct cs_packet_up {
 	char size;
