@@ -71,6 +71,7 @@ char	packet_buffer[BUF_SIZE];
 DWORD		in_packet_size = 0;
 int		saved_packet_size = 0;
 int		g_myid;
+bool	is_login_ok = false;
 
 int		g_left_x = 0;
 int     g_top_y = 0;
@@ -87,6 +88,7 @@ void ProcessPacket(char *ptr)
 		sc_packet_login_ok *packet = 
 			reinterpret_cast<sc_packet_login_ok *>(ptr);
 		g_myid = packet->id;
+		is_login_ok = true;
 	}
 
 	case SC_PUT_PLAYER:
@@ -274,6 +276,10 @@ BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 				int error_code = WSAGetLastError();
 				printf("Error while sending packet [%d]", error_code);
 			}
+
+			EnableWindow(hSendButton, FALSE);
+
+			EndDialog(hDlg, IDCANCEL);
 
 			SendMessage(hIdInputBox, EM_SETSEL, 0, -1);
 			return TRUE;

@@ -9,7 +9,7 @@ WIN recv()&send    : 데이터 읽고쓰기
 6. close()
 WIN closesocket    : 소켓종료
 */
-
+#define _CRT_SECURE_NO_WARNINGS
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <iostream>
 using namespace std;
@@ -34,7 +34,10 @@ using namespace chrono;
 #define MAX_BUFFER        1024
 #define VIEW_RADIUS			8
 #define NPC_RADIUS			9
-enum EVENT_TYPE { EVT_MOVE, EVT_HEAL, EVT_RECV, EVT_SEND };
+#define MAX_ID				20
+
+enum EVENT_TYPE { EVT_MOVE, EVT_HEAL, EVT_RECV, EVT_SEND,
+				  DB_EVT_SEARCH, DB_EVT_SAVE };
 
 // 오버랩드 구조체를 확장해서 쓰자
 struct OVER_EX{
@@ -58,6 +61,8 @@ public:
 	char packetBuffer[MAX_BUFFER];
 	int prev_size;
 	int x, y;
+	bool is_login_ok;
+	char login_id[MAX_ID];
 
 	SOCKETINFO() {
 		in_use = false;
@@ -75,47 +80,6 @@ public :
 	bool is_sleeping;
 };
 NPCINFO npcs[MAX_NPC];
-// 장점 : 메모리의 낭비가 없다. 직관적이다.
-// 단점 : 함수의 중복 구현이 필요하다.
-// // bool Is_Near_Object(int a, int b); 이 함수 하나를
-// // bool Is_Near_Player_Player, Is_Near_Player_Npc, Is_Near_Npc_Npc;
- 
- 
-//// NPC 구현 두번째
-// class NPCINFO {
-// public :
-// 	char x, y;
-// };
-// 
-// class SOCKETINFO : public NPCINFO {
-// 	bool in_use;
-// 	mutex myLock;
-// 	OVER_EX over_ex;
-// 	SOCKET socket;
-// 	char packetBuffer[MAX_BUFFER];
-// 	int prev_size;
-// 	unordered_set <int> viewlist;
-// 	
-// 	SOCKETINFO() {
-// 		in_use = false;
-// 		over_ex.dataBuffer.len = MAX_BUFFER;
-// 		over_ex.dataBuffer.buf = over_ex.messageBuffer;
-// 		over_ex.is_recv = true;
-// 	}
-// };
-// 
-// NPCINFO *objects[MAX_USER + MAX_NPC];
- 
- // 장점 : 메모리의 낭비가 없다. 함수의 중복 구현이 필요 없다.
- // 단점 : 포인터의 사용. 비직관적
- // 특징 : ID 배분을 하거나, object_type 멤버가 필요. (추가적인 복잡도가 늘어남)
-
- // NPC 구현 실습 단순 무식
-// ID : 0 ~ 9 플레이어
-// ID : 10 ~ 10 + NUM_NPC - 1 까지는 NPC
-// SOCKETINFO clients[MAX_USER + MAX_NPC];
-// 장점 : 포인터 사용X
-// 단점 : 어마어마한 메모리 낭비
 
 struct EVENT_ST {
 	int obj_id;
@@ -126,21 +90,33 @@ struct EVENT_ST {
 	}
 };
 
+struct DB_EVENT_ST {
+	int client_id;
+	EVENT_TYPE type;
+};
+
 mutex timer_lock;
+mutex db_lock;
 
 priority_queue<EVENT_ST> timer_queue;
+queue<DB_EVENT_ST> db_queue;
 
 HANDLE g_iocp;
 
 void err_display(const char * msg, int err_no);
-void db_err_display(const char * msg, int err_no);
+void db_err_display(SQLHANDLE hHandle, SQLSMALLINT hType, RETCODE RetCode);
 void add_timer(int obj_id, EVENT_TYPE et, high_resolution_clock::time_point start_time);
+void add_db_evt(int client_id, EVENT_TYPE et);
+
 void Init();
 
 int do_accept();
 void do_timer();
 void do_transaction();
 void do_recv(int id);
+
+bool search_user_id(int client);
+bool save_user_data(int client);
 
 void send_packet(int client, void *packet);
 
@@ -157,6 +133,7 @@ void send_put_npc_packet(int clients, int npc);
 
 void process_packet(int client, char *packet);
 void process_event(EVENT_ST &ev);
+void process_db_event(DB_EVENT_ST &ev);
 
 void disconnect_client(int id);
 
@@ -236,10 +213,16 @@ void add_timer(int obj_id, EVENT_TYPE et, high_resolution_clock::time_point star
 	timer_queue.emplace(EVENT_ST{ obj_id,et,start_time });
 	timer_lock.unlock();
 }
+void add_db_evt(int client_id, EVENT_TYPE et) {
+	db_lock.lock();
+	db_queue.emplace(DB_EVENT_ST{ client_id, et });
+	db_lock.unlock();
+}
 
 void Init() {
 	for (int pl_id = 0; pl_id < MAX_USER; ++pl_id) {
 		clients[pl_id].in_use = false;
+		clients[pl_id].is_login_ok = false;
 	}
 
 	for (int npc_id = 0; npc_id < MAX_NPC; ++npc_id) {
@@ -329,7 +312,7 @@ int do_accept()
 		// recv 준비
 		clients[new_id].socket = clientSocket;
 		clients[new_id].prev_size = 0;
-		clients[new_id].x = clients[new_id].y = 400;
+		clients[new_id].x = clients[new_id].y = 50;
 		clients[new_id].viewlist.clear(); // 뷰리스트 초기화
 		ZeroMemory(&clients[new_id].over_ex.over, 
 			sizeof(clients[new_id].over_ex.over));
@@ -339,53 +322,12 @@ int do_accept()
 
 		clients[new_id].in_use = true; // IOCP에 등록 한 다음 true로 바꿔줘야 데이터를 받을 수 있당
 
-		// 여기에 id 확인을 추가합시닷
-
-		send_login_ok_packet(new_id);
-		send_put_player_packet(new_id, new_id); // 나한테 내 위치 보내기
-
-		// 다른 플레이어의 뷰리스트에 나를 추가하고 전송
-		for (int i = 0; i < MAX_USER; ++i) {
-			if (false == clients[i].in_use) continue;
-			if (false == is_eyesight(new_id, i)) continue;
-			if (i == new_id) continue;
-
-			clients[i].myLock.lock();
-			clients[i].viewlist.insert(new_id);
-			clients[i].myLock.unlock();
-			
-			send_put_player_packet(i, new_id);
-		}
-
-
-		// 내 위치를 뷰리스트에 있는 다른 플레이어에게 전송
-		for (int i = 0; i < MAX_USER; ++i) {
-			if (false == clients[i].in_use) continue;
-			if (i == new_id) continue;
-			if (false == is_eyesight(i, new_id)) continue;
-
-			clients[new_id].myLock.lock();
-			clients[new_id].viewlist.insert(i);
-			clients[new_id].myLock.unlock();
-
-			send_put_player_packet(new_id, i);
-		}
-
-
-		// 내 주변에 있는 NPC를 뷰리스트에 추가
-		for (int i = 0; i < MAX_NPC; ++i) {
-			if (false == is_player_npc_eyesight(new_id, i)) continue;
-
-			clients[new_id].myLock.lock();
-			clients[new_id].npc_viewlist.insert(i);
-			clients[new_id].myLock.unlock();
-
-			send_put_npc_packet(new_id, i);
-
-			wakeup_NPC(i);
-		}
-
 		do_recv(new_id);
+
+		// 여기에 id 확인을 추가합시닷
+		if (clients[new_id].is_login_ok) {
+		}
+
 	}
 
 	// 6-2. 리슨 소켓종료
@@ -416,15 +358,16 @@ void do_recv(int id) {
 
 }
 
-void do_transaction() {
+bool search_user_id(int client) {
 	SQLHENV henv;
 	SQLHDBC hdbc;
 	SQLHSTMT hstmt = 0;
 	SQLRETURN retcode;
 
-	SQLINTEGER uid, ulevel;
-	SQLWCHAR uname[20];
-	SQLLEN cb_uid = 0, cb_uname = 0, cb_ulevel = 0;
+	SQLWCHAR uid[20];
+	SQLINTEGER uposx, uposy;
+	SQLLEN cb_uid = 0, cb_uposx = 0, cb_uposy = 0;
+	wchar_t buf[128] = {};
 
 	setlocale(LC_ALL, "korean");
 
@@ -444,7 +387,7 @@ void do_transaction() {
 				SQLSetConnectAttr(hdbc, SQL_LOGIN_TIMEOUT, (SQLPOINTER)5, 0);
 
 				// Connect to data source  
-				retcode = SQLConnect(hdbc, (SQLWCHAR*)L"2019_WT_GS", SQL_NTS, (SQLWCHAR*)NULL, 0, NULL, 0);
+				retcode = SQLConnect(hdbc, (SQLWCHAR*)L"2019_WT_2016184017", SQL_NTS, (SQLWCHAR*)NULL, 0, NULL, 0);
 
 				// Allocate statement handle  
 				if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
@@ -453,29 +396,154 @@ void do_transaction() {
 					retcode = SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt);
 
 
+					char query[128] = "EXEC select_user_id ";
+					strcat(query, clients[client].login_id);
+//					cout << "strcat 결과 : " << query << endl;
+					
+					mbstowcs(buf, query, strlen(query));
+					wcout << buf << endl;
 					// 여기를 봐라~!!~!!!!!!!!!!!!!!!!1
 					// SQLExecDirect하면 SQL 명령어가 실행됨
 					// EXEC 하고 내장함수 이름, 파라미터 주면 실행된다!!!!
-					retcode = SQLExecDirect(hstmt, (SQLWCHAR *)L"EXEC select_highlevel 100", SQL_NTS);
+					retcode = SQLExecDirect(hstmt, (SQLWCHAR *)buf, SQL_NTS);
 
-					//					retcode = SQLExecDirect(hstmt, (SQLWCHAR *)L"SELECT user_id, user_name, user_level FROM user_table ORDER BY 2, 1, 3", SQL_NTS);
 					if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
 
 						// Bind columns 1, 2, and 3  
 						//retcode = SQLBindCol(hstmt, 1, SQL_INTEGER, &uid, 100, &cb_uid);
-						retcode = SQLBindCol(hstmt, 1, SQL_C_CHAR, uname, 20, &cb_uname);
-						retcode = SQLBindCol(hstmt, 2, SQL_INTEGER, &ulevel, 10, &cb_ulevel);
+						retcode = SQLBindCol(hstmt, 1, SQL_C_CHAR, uid, 20, &cb_uid);
+						retcode = SQLBindCol(hstmt, 2, SQL_INTEGER, &uposx, 10, &cb_uposx);
+						retcode = SQLBindCol(hstmt, 3, SQL_INTEGER, &uposy, 10, &cb_uposy);
 
-						// Fetch and print each row of data. On an error, display a message and exit.  
-						for (int i = 0; ; i++) {
-							// SQLFetch로 꺼낸다
-							retcode = SQLFetch(hstmt);
-							if (retcode == SQL_ERROR || retcode == SQL_SUCCESS_WITH_INFO)
-								printf("error\n");
-							if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO)
-								wprintf(L"%d: %S %d\n", i + 1, uname, ulevel);
-							else // EOF일때..! EOD일수도 (End Of File / End Of Data)
-								break;
+						retcode = SQLFetch(hstmt);
+						if (retcode == SQL_ERROR || retcode == SQL_SUCCESS_WITH_INFO)
+							printf("error\n");
+						if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+							wprintf(L"%S : %d %d\n", uid, uposx, uposy);
+							clients[client].x = uposx;
+							clients[client].y = uposy;
+							clients[client].is_login_ok = true;
+							return true;
+						}
+						else {
+							// EOF일때..! EOD일수도 (End Of File / End Of Data)
+							return false;
+						}
+
+						//// Fetch and print each row of data. On an error, display a message and exit.  
+						//for (int i = 0; ; i++) {
+						//	// SQLFetch로 꺼낸다
+						//	retcode = SQLFetch(hstmt);
+						//	if (retcode == SQL_ERROR || retcode == SQL_SUCCESS_WITH_INFO)
+						//		printf("error\n");
+						//	if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+						//		wprintf(L"%d: %S %d %d\n", i + 1, uid, uposx, uposy);
+						//		clients[client].x = uposx;
+						//		clients[client].y = uposy;
+						//		clients[client].is_login_ok = true;
+						//		return true;
+						//	}
+						//	else {
+						//		// EOF일때..! EOD일수도 (End Of File / End Of Data)
+						//		disconnect_client(client);
+						//		return false;
+						//	}
+						//}
+					}
+					else {
+						db_err_display(hstmt, SQL_HANDLE_STMT, retcode);
+					}
+
+					// Process data  
+					if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+						SQLCancel(hstmt);
+						SQLFreeHandle(SQL_HANDLE_STMT, hstmt);
+					}
+
+					SQLDisconnect(hdbc);
+				}
+
+				SQLFreeHandle(SQL_HANDLE_DBC, hdbc);
+			}
+		}
+		SQLFreeHandle(SQL_HANDLE_ENV, henv);
+	}
+}
+bool save_user_data(int client) {
+	SQLHENV henv;
+	SQLHDBC hdbc;
+	SQLHSTMT hstmt = 0;
+	SQLRETURN retcode;
+
+	SQLWCHAR uid[20];
+	SQLINTEGER uposx, uposy;
+	SQLLEN cb_uid = 0, cb_uposx = 0, cb_uposy = 0;
+	
+	setlocale(LC_ALL, "korean");
+
+	// Allocate environment handle  
+	retcode = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &henv);
+
+	// Set the ODBC version environment attribute  
+	if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+		retcode = SQLSetEnvAttr(henv, SQL_ATTR_ODBC_VERSION, (SQLPOINTER*)SQL_OV_ODBC3, 0);
+
+		// Allocate connection handle  
+		if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+			retcode = SQLAllocHandle(SQL_HANDLE_DBC, henv, &hdbc);
+
+			// Set login timeout to 5 seconds  
+			if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+				SQLSetConnectAttr(hdbc, SQL_LOGIN_TIMEOUT, (SQLPOINTER)5, 0);
+
+				// Connect to data source  
+				retcode = SQLConnect(hdbc, (SQLWCHAR*)L"2019_WT_2016184017", SQL_NTS, (SQLWCHAR*)NULL, 0, NULL, 0);
+
+				// Allocate statement handle  
+				if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+					cout << "SQL DB Connect OK!!\n";
+
+					retcode = SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt);
+
+					char query[128] = {};
+					char query_buf[30] = "EXEC update_user_data ";
+					char pos_x_buf[10] = {};
+					char pos_y_buf[10] = {};
+					wchar_t buf[128] = {};
+
+					_itoa(clients[client].x, pos_x_buf, 10);
+					_itoa(clients[client].y, pos_y_buf, 10);
+
+					sprintf(query, "%s%s, %s, %s", query_buf, clients[client].login_id, pos_x_buf, pos_y_buf);
+					
+					cout << "결과 : " << query << endl;
+
+					mbstowcs(buf, query, strlen(query));
+					wcout << buf << endl;
+
+					// 여기를 봐라~!!~!!!!!!!!!!!!!!!!1
+					// SQLExecDirect하면 SQL 명령어가 실행됨
+					// EXEC 하고 내장함수 이름, 파라미터 주면 실행된다!!!!
+					retcode = SQLExecDirect(hstmt, (SQLWCHAR *)buf, SQL_NTS);
+
+					if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+
+						// Bind columns 1, 2, and 3  
+						//retcode = SQLBindCol(hstmt, 1, SQL_INTEGER, &uid, 100, &cb_uid);
+						retcode = SQLBindCol(hstmt, 1, SQL_C_CHAR, uid, 20, &cb_uid);
+						retcode = SQLBindCol(hstmt, 2, SQL_INTEGER, &uposx, 10, &cb_uposx);
+						retcode = SQLBindCol(hstmt, 3, SQL_INTEGER, &uposy, 10, &cb_uposy);
+
+						retcode = SQLFetch(hstmt);
+						if (retcode == SQL_ERROR || retcode == SQL_SUCCESS_WITH_INFO)
+							printf("error\n");
+						if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+							wprintf(L"%S : %d %d\n", uid, uposx, uposy);
+							return true;
+						}
+						else {
+							// EOF일때..! EOD일수도 (End Of File / End Of Data)
+							return false;
 						}
 					}
 					else {
@@ -497,6 +565,7 @@ void do_transaction() {
 		SQLFreeHandle(SQL_HANDLE_ENV, henv);
 	}
 }
+
 
 void send_packet(int client, void *packet) {
 	char *p = reinterpret_cast<char *>(packet);
@@ -601,141 +670,143 @@ void send_put_npc_packet(int client, int npc) {
 }
 
 void process_packet(int client, char * packet) {
-	//cs_packet_id *idp = reinterpret_cast<cs_packet_id *>(packet);
-	//if (idp->type == CS_ID) {
-	//	cout << "접속 요청 id : " << idp->id << '\n';
-	//}
-
-	cs_packet_id *p = reinterpret_cast<cs_packet_id *>(packet);
-	
-	int x = clients[client].x;
-	int y = clients[client].y;
-
-	auto old_vl = clients[client].viewlist;
-	auto old_npc_vl = clients[client].npc_viewlist;
-
-	switch (p->type) {
-	case CS_UP: if(y > 0) y--; break;
-	case CS_DOWN: if(y < (WORLD_HEIGHT - 1)) y++; break;
-	case CS_LEFT: if(x > 0) x--; break;
-	case CS_RIGHT: if (x < (WORLD_WIDTH - 1)) x++; break;
-	case CS_ID: wcout << L"접속 요청 ID : " << p->id << '\n'; break;
-	default:
-		wcout << L"정의되지 않은 패킷 도착 오류!!\n";
-		//while (true);
+	if (!clients[client].is_login_ok) {
+		cs_packet_id *idp = reinterpret_cast<cs_packet_id *>(packet);
+		wcout << L"접속 요청 ID : " << idp->id << '\n';
+		strcpy(clients[client].login_id, idp->id);
+		wcout << L"ID : " << clients[client].login_id << '\n';
+		add_db_evt(client, DB_EVT_SEARCH);
 	}
+	else {
+		cs_packet_id *p = reinterpret_cast<cs_packet_id *>(packet);
 
-	clients[client].x = x;
-	clients[client].y = y;
+		int x = clients[client].x;
+		int y = clients[client].y;
 
-	unordered_set <int> new_vl; // 이동 후의 새로운 뷰리스트
-	for (int i = 0; i < MAX_USER; ++i) {
-		if (false == clients[i].in_use) continue;
-		if (i == client) continue; // 나는 넘어가기
-		if (false == is_eyesight(i, client)) continue; // 안보이면 추가안함
-		new_vl.insert(i); // 이동 후에 보인 애들이 여기에 들어가있겠지.. 이걸로 비교하면 된다!
-	}
-	
-	send_pos_packet(client, client);
+		auto old_vl = clients[client].viewlist;
+		auto old_npc_vl = clients[client].npc_viewlist;
 
-	// 3가지 Case가 있다
-	// Case 1. old_vl 에도 있고 new_vl에도 있는 플레이어 -> Send packet~
-	for (auto &player : old_vl) {
-		if (0 == new_vl.count(player)) continue; // 뉴 리스트에 없으면 넘어가~
-		if (0 < clients[player].viewlist.count(client)) { // 상대방 뷰리스트에 나도 있으면 걍 보내기~
-			send_pos_packet(player, client);
+		switch (p->type) {
+		case CS_UP: if (y > 0) y--; break;
+		case CS_DOWN: if (y < (WORLD_HEIGHT - 1)) y++; break;
+		case CS_LEFT: if (x > 0) x--; break;
+		case CS_RIGHT: if (x < (WORLD_WIDTH - 1)) x++; break;
+		default:
+			wcout << L"정의되지 않은 패킷 도착 오류!!\n";
+			//while (true);
 		}
-		else { // 나는 얘가 있는데 상대방 뷰리스트에 내가 없어.. 그럼 상대방 뷰리스트에 나를 추가하고 보내기
-			clients[player].myLock.lock();
-			clients[player].viewlist.insert(client);
-			clients[player].myLock.unlock();
 
-			send_put_player_packet(player, client);
+		clients[client].x = x;
+		clients[client].y = y;
+
+		unordered_set <int> new_vl; // 이동 후의 새로운 뷰리스트
+		for (int i = 0; i < MAX_USER; ++i) {
+			if (false == clients[i].in_use) continue;
+			if (i == client) continue; // 나는 넘어가기
+			if (false == is_eyesight(i, client)) continue; // 안보이면 추가안함
+			new_vl.insert(i); // 이동 후에 보인 애들이 여기에 들어가있겠지.. 이걸로 비교하면 된다!
 		}
-	}
 
-	// Case 2. old_vl 에 없음, new_vl 에는 있음 -> 내 시야에 들어온거임~
-	for (auto &player : new_vl) {
-		if (0 < old_vl.count(player)) continue; // 옛날 뷰리스트에 상대방이 있으면 통과~
+		send_pos_packet(client, client);
 
-		// 없으면 내 뷰리스트에 추가해주자
-		clients[client].myLock.lock();
-		clients[client].viewlist.insert(player);
-		clients[client].myLock.unlock();
+		// 3가지 Case가 있다
+		// Case 1. old_vl 에도 있고 new_vl에도 있는 플레이어 -> Send packet~
+		for (auto &player : old_vl) {
+			if (0 == new_vl.count(player)) continue; // 뉴 리스트에 없으면 넘어가~
+			if (0 < clients[player].viewlist.count(client)) { // 상대방 뷰리스트에 나도 있으면 걍 보내기~
+				send_pos_packet(player, client);
+			}
+			else { // 나는 얘가 있는데 상대방 뷰리스트에 내가 없어.. 그럼 상대방 뷰리스트에 나를 추가하고 보내기
+				clients[player].myLock.lock();
+				clients[player].viewlist.insert(client);
+				clients[player].myLock.unlock();
 
-		send_put_player_packet(client, player);
-
-		// 상대방 뷰리스트에 내가 없으면 날 추가한다
-		if (0 == clients[player].viewlist.count(client)) {
-			clients[player].myLock.lock();
-			clients[player].viewlist.insert(client);
-			clients[player].myLock.unlock();
-
-			send_put_player_packet(player, client);
+				send_put_player_packet(player, client);
+			}
 		}
-		else {
-			send_pos_packet(player, client);
-		}
-	}
 
-	// Case 3. old_vl에 있었는데 new_vl에는 없는 경우 -> 내 시야에서 사라진 경우
-	for (auto &player : old_vl) {
-		if (0 < new_vl.count(player)) continue; // 새로운 리스트에 상대방 있으면 넘어가~
+		// Case 2. old_vl 에 없음, new_vl 에는 있음 -> 내 시야에 들어온거임~
+		for (auto &player : new_vl) {
+			if (0 < old_vl.count(player)) continue; // 옛날 뷰리스트에 상대방이 있으면 통과~
 
-		clients[client].myLock.lock();
-		clients[client].viewlist.erase(player);
-		clients[client].myLock.unlock();
-
-		send_remove_player_packet(client, player);
-
-		// 상대방 뷰 리스트에 여전히 내가 있다면 삭제해주기
-		if (0 < clients[player].viewlist.count(client)) {
-			clients[player].myLock.lock();
-			clients[player].viewlist.erase(client);
-			clients[player].myLock.unlock();
-
-			send_remove_player_packet(player, client);
-		}
-	}
-
-
-	// npc 뷰리스트
-	unordered_set <int> new_npc_vl; // 이동 후의 새로운 뷰리스트
-	for (int i = 0; i < MAX_NPC; ++i) {
-		if (false == is_player_npc_eyesight(client, i)) continue;
-		new_npc_vl.insert(i); // 이동 후에 보이는 npc들
-	}
-
-
-	// Case 1. old_vl, new_vl에 있는 npc
-	for (auto &npc : old_npc_vl) {
-		// 옛날 시야에는 있었지만 새로운 시야에 없으면
-		if (0 == new_npc_vl.count(npc)) {
+			// 없으면 내 뷰리스트에 추가해주자
 			clients[client].myLock.lock();
-			clients[client].npc_viewlist.erase(npc);
+			clients[client].viewlist.insert(player);
 			clients[client].myLock.unlock();
 
-			send_remove_npc_packet(client, npc);
+			send_put_player_packet(client, player);
+
+			// 상대방 뷰리스트에 내가 없으면 날 추가한다
+			if (0 == clients[player].viewlist.count(client)) {
+				clients[player].myLock.lock();
+				clients[player].viewlist.insert(client);
+				clients[player].myLock.unlock();
+
+				send_put_player_packet(player, client);
+			}
+			else {
+				send_pos_packet(player, client);
+			}
 		}
-//		else { 
-//			send_put_npc_packet(client, npc);
-//		}
+
+		// Case 3. old_vl에 있었는데 new_vl에는 없는 경우 -> 내 시야에서 사라진 경우
+		for (auto &player : old_vl) {
+			if (0 < new_vl.count(player)) continue; // 새로운 리스트에 상대방 있으면 넘어가~
+
+			clients[client].myLock.lock();
+			clients[client].viewlist.erase(player);
+			clients[client].myLock.unlock();
+
+			send_remove_player_packet(client, player);
+
+			// 상대방 뷰 리스트에 여전히 내가 있다면 삭제해주기
+			if (0 < clients[player].viewlist.count(client)) {
+				clients[player].myLock.lock();
+				clients[player].viewlist.erase(client);
+				clients[player].myLock.unlock();
+
+				send_remove_player_packet(player, client);
+			}
+		}
+
+
+		// npc 뷰리스트
+		unordered_set <int> new_npc_vl; // 이동 후의 새로운 뷰리스트
+		for (int i = 0; i < MAX_NPC; ++i) {
+			if (false == is_player_npc_eyesight(client, i)) continue;
+			new_npc_vl.insert(i); // 이동 후에 보이는 npc들
+		}
+
+
+		// Case 1. old_vl, new_vl에 있는 npc
+		for (auto &npc : old_npc_vl) {
+			// 옛날 시야에는 있었지만 새로운 시야에 없으면
+			if (0 == new_npc_vl.count(npc)) {
+				clients[client].myLock.lock();
+				clients[client].npc_viewlist.erase(npc);
+				clients[client].myLock.unlock();
+
+				send_remove_npc_packet(client, npc);
+			}
+			//		else { 
+			//			send_put_npc_packet(client, npc);
+			//		}
+		}
+
+		// Case 2. old_vl 에 없음, new_vl 에는 있음 -> 내 시야에 들어온거임~
+		for (auto &npc : new_npc_vl) {
+			if (0 < old_npc_vl.count(npc)) continue; // 옛날 뷰리스트에 있으면 통과~
+
+			// 없으면 내 뷰리스트에 추가해주자
+			clients[client].myLock.lock();
+			clients[client].npc_viewlist.insert(npc);
+			clients[client].myLock.unlock();
+
+			send_put_npc_packet(client, npc);
+
+			wakeup_NPC(npc);
+		}
 	}
-
-	// Case 2. old_vl 에 없음, new_vl 에는 있음 -> 내 시야에 들어온거임~
-	for (auto &npc : new_npc_vl) {
-		if (0 < old_npc_vl.count(npc)) continue; // 옛날 뷰리스트에 있으면 통과~
-
-		// 없으면 내 뷰리스트에 추가해주자
-		clients[client].myLock.lock();
-		clients[client].npc_viewlist.insert(npc);
-		clients[client].myLock.unlock();
-
-		send_put_npc_packet(client, npc);
-
-		wakeup_NPC(npc);
-	}
-
 }
 
 void process_event(EVENT_ST &ev) {
@@ -768,22 +839,96 @@ void process_event(EVENT_ST &ev) {
 		break;
 	}
 }
+void process_db_event(DB_EVENT_ST &ev) {
+	int new_id = ev.client_id;
+	switch (ev.type) {
+	case DB_EVT_SEARCH:
+		if (search_user_id(ev.client_id))
+		{
+			send_login_ok_packet(new_id);
+			send_put_player_packet(new_id, new_id); // 나한테 내 위치 보내기
+
+			// 다른 플레이어의 뷰리스트에 나를 추가하고 전송
+			for (int i = 0; i < MAX_USER; ++i) {
+				if (false == clients[i].in_use) continue;
+				if (false == is_eyesight(new_id, i)) continue;
+				if (i == new_id) continue;
+
+				clients[i].myLock.lock();
+				clients[i].viewlist.insert(new_id);
+				clients[i].myLock.unlock();
+
+				send_put_player_packet(i, new_id);
+			}
+
+
+			// 내 위치를 뷰리스트에 있는 다른 플레이어에게 전송
+			for (int i = 0; i < MAX_USER; ++i) {
+				if (false == clients[i].in_use) continue;
+				if (i == new_id) continue;
+				if (false == is_eyesight(i, new_id)) continue;
+
+				clients[new_id].myLock.lock();
+				clients[new_id].viewlist.insert(i);
+				clients[new_id].myLock.unlock();
+
+				send_put_player_packet(new_id, i);
+			}
+
+
+			// 내 주변에 있는 NPC를 뷰리스트에 추가
+			for (int i = 0; i < MAX_NPC; ++i) {
+				if (false == is_player_npc_eyesight(new_id, i)) continue;
+
+				clients[new_id].myLock.lock();
+				clients[new_id].npc_viewlist.insert(i);
+				clients[new_id].myLock.unlock();
+
+				send_put_npc_packet(new_id, i);
+
+				wakeup_NPC(i);
+			}
+
+		} else 	disconnect_client(new_id);
+
+
+		break;
+	case DB_EVT_SAVE:
+		if (save_user_data(ev.client_id)) {
+			wcout << L"저장 성공!\n";
+		}
+		else {
+			wcout << L"저장 실패!!!\n";
+		}
+		wcout << L"연결을 종료합니다! \n";
+			clients[new_id].is_login_ok = false;
+			disconnect_client(new_id);
+
+		break;
+	default:
+		break;
+	}
+}
 
 void disconnect_client(int id) {
-	for (int i = 0; i < MAX_USER; ++i) {
-		if (false == clients[i].in_use) continue;
-		if (i == id) continue;
-		if (0 == clients[i].viewlist.count(id)) continue; // 다른 클라이언트의 뷰리스트에 내가 없으면 넘어가기
+	if(clients[id].is_login_ok) add_db_evt(id, DB_EVT_SAVE);
+	else {
+		for (int i = 0; i < MAX_USER; ++i) {
+			if (false == clients[i].in_use) continue;
+			if (i == id) continue;
+			if (0 == clients[i].viewlist.count(id)) continue; // 다른 클라이언트의 뷰리스트에 내가 없으면 넘어가기
 
-		clients[i].myLock.lock();
-		clients[i].viewlist.erase(id);
-		clients[i].myLock.unlock();
+			clients[i].myLock.lock();
+			clients[i].viewlist.erase(id);
+			clients[i].myLock.unlock();
 
-		send_remove_player_packet(i, id);		
+			send_remove_player_packet(i, id);
+		}
+		closesocket(clients[id].socket);
+		clients[id].in_use = false;
+		clients[id].is_login_ok = false;
+		clients[id].viewlist.clear();
 	}
-	closesocket(clients[id].socket);
-	clients[id].in_use = false;
-	clients[id].viewlist.clear();
 }
 
 void worker_thread() {
@@ -870,6 +1015,22 @@ void worker_thread() {
 			process_event(ev);
 			delete over_ex;
 		}
+		else if (DB_EVT_SEARCH == over_ex->event_t) {
+			DB_EVENT_ST dev;
+			dev.client_id = key;
+			dev.type = DB_EVT_SEARCH;
+
+			process_db_event(dev);
+			delete over_ex;
+		}
+		else if (DB_EVT_SAVE == over_ex->event_t) {
+			DB_EVENT_ST dev;
+			dev.client_id = key;
+			dev.type = DB_EVT_SAVE;
+
+			process_db_event(dev);
+			delete over_ex;
+		}
 		else {
 			cout << "UNKNOWN EVENT\n";
 			while (true);
@@ -901,6 +1062,28 @@ void do_timer() {
 			OVER_EX *over_ex = new OVER_EX;
 			over_ex->event_t = EVT_MOVE;
 			PostQueuedCompletionStatus(g_iocp, 1, ev.obj_id, &over_ex->over);
+		}
+	}
+}
+
+void do_transaction() {
+	while (true) {
+		this_thread::sleep_for(10ms);
+		while (true) {
+			db_lock.lock();
+			if (true == db_queue.empty()) {
+				db_lock.unlock();
+				break;
+			}
+
+			DB_EVENT_ST ev = db_queue.front();
+
+			db_queue.pop();
+			db_lock.unlock();
+
+			OVER_EX *over_ex = new OVER_EX;
+			over_ex->event_t = ev.type;
+			PostQueuedCompletionStatus(g_iocp, 1, ev.client_id, &over_ex->over);
 		}
 	}
 }
