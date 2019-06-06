@@ -1,6 +1,6 @@
 #pragma once
 
-constexpr int MAX_USER = 10;
+constexpr int MAX_USER = 500;
 constexpr int MAX_NPC = 20000;
 constexpr int MAX_STR_LEN = 50; // 크게하면 패킷크기 넘어가니까 50 이하의 숫자를 넣도록! 유니코드니까 50하면 100바이트 쓰는거임
 

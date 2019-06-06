@@ -63,7 +63,7 @@ class SOCKETINFO
 public:
 	bool in_use;
 	// 클라이언트마다 하나씩 있어야댐.. 하나로 공유하면 덮어써버리는거다... 밑에 4개는 클라마다 꼭 있어야 하는 것.. 必수要소
-	mutex myLock;
+	mutex view_lock;
 	OVER_EX over_ex;
 	SOCKET socket;
 	char packetBuffer[MAX_BUFFER];
@@ -380,7 +380,9 @@ int do_accept()
 		clients[new_id].socket = clientSocket;
 		clients[new_id].prev_size = 0;
 		clients[new_id].x = clients[new_id].y = 50;
+		clients[new_id].view_lock.lock();
 		clients[new_id].viewlist.clear(); // 뷰리스트 초기화
+		clients[new_id].view_lock.unlock();
 		ZeroMemory(&clients[new_id].over_ex.over, 
 			sizeof(clients[new_id].over_ex.over));
 		flags = 0;
@@ -390,11 +392,6 @@ int do_accept()
 		clients[new_id].in_use = true; // IOCP에 등록 한 다음 true로 바꿔줘야 데이터를 받을 수 있당
 
 		do_recv(new_id);
-
-		// 여기에 id 확인을 추가합시닷
-		if (clients[new_id].is_login_ok) {
-		}
-
 	}
 
 	// 6-2. 리슨 소켓종료
@@ -497,25 +494,6 @@ bool search_user_id(int client) {
 							return false;
 						}
 
-						//// Fetch and print each row of data. On an error, display a message and exit.  
-						//for (int i = 0; ; i++) {
-						//	// SQLFetch로 꺼낸다
-						//	retcode = SQLFetch(hstmt);
-						//	if (retcode == SQL_ERROR || retcode == SQL_SUCCESS_WITH_INFO)
-						//		printf("error\n");
-						//	if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
-						//		wprintf(L"%d: %S %d %d\n", i + 1, uid, uposx, uposy);
-						//		clients[client].x = uposx;
-						//		clients[client].y = uposy;
-						//		clients[client].is_login_ok = true;
-						//		return true;
-						//	}
-						//	else {
-						//		// EOF일때..! EOD일수도 (End Of File / End Of Data)
-						//		disconnect_client(client);
-						//		return false;
-						//	}
-						//}
 					}
 					else {
 						db_err_display(hstmt, SQL_HANDLE_STMT, retcode);
@@ -667,7 +645,7 @@ void send_chat_packet(int client, int from_id, wchar_t *msg) {
 	packet.id = from_id;
 	packet.size = sizeof(packet);
 	packet.type = SC_CHAT;
-	wcscpy(packet.message, msg);
+	wcscpy_s(packet.message, msg);
 	send_packet(client, &packet);
 }
 
@@ -759,8 +737,10 @@ void process_packet(int client, char * packet) {
 		int x = clients[client].x;
 		int y = clients[client].y;
 
+		clients[client].view_lock.lock();
 		auto old_vl = clients[client].viewlist;
 		auto old_npc_vl = clients[client].npc_viewlist;
+		clients[client].view_lock.unlock();
 
 		switch (p->type) {
 		case CS_UP: if (y > 0) y--; break;
@@ -789,13 +769,14 @@ void process_packet(int client, char * packet) {
 		// Case 1. old_vl 에도 있고 new_vl에도 있는 플레이어 -> Send packet~
 		for (auto &player : old_vl) {
 			if (0 == new_vl.count(player)) continue; // 뉴 리스트에 없으면 넘어가~
+			clients[player].view_lock.lock();
 			if (0 < clients[player].viewlist.count(client)) { // 상대방 뷰리스트에 나도 있으면 걍 보내기~
+				clients[player].view_lock.unlock();
 				send_pos_packet(player, client);
 			}
 			else { // 나는 얘가 있는데 상대방 뷰리스트에 내가 없어.. 그럼 상대방 뷰리스트에 나를 추가하고 보내기
-				clients[player].myLock.lock();
 				clients[player].viewlist.insert(client);
-				clients[player].myLock.unlock();
+				clients[player].view_lock.unlock();
 
 				send_put_player_packet(player, client);
 			}
@@ -806,21 +787,23 @@ void process_packet(int client, char * packet) {
 			if (0 < old_vl.count(player)) continue; // 옛날 뷰리스트에 상대방이 있으면 통과~
 
 			// 없으면 내 뷰리스트에 추가해주자
-			clients[client].myLock.lock();
+			clients[client].view_lock.lock();
 			clients[client].viewlist.insert(player);
-			clients[client].myLock.unlock();
+			clients[client].view_lock.unlock();
 
 			send_put_player_packet(client, player);
 
+			clients[player].view_lock.lock();
 			// 상대방 뷰리스트에 내가 없으면 날 추가한다
 			if (0 == clients[player].viewlist.count(client)) {
-				clients[player].myLock.lock();
 				clients[player].viewlist.insert(client);
-				clients[player].myLock.unlock();
+				clients[player].view_lock.unlock();
 
 				send_put_player_packet(player, client);
 			}
 			else {
+				clients[player].view_lock.unlock();
+
 				send_pos_packet(player, client);
 			}
 		}
@@ -829,20 +812,21 @@ void process_packet(int client, char * packet) {
 		for (auto &player : old_vl) {
 			if (0 < new_vl.count(player)) continue; // 새로운 리스트에 상대방 있으면 넘어가~
 
-			clients[client].myLock.lock();
+			clients[client].view_lock.lock();
 			clients[client].viewlist.erase(player);
-			clients[client].myLock.unlock();
+			clients[client].view_lock.unlock();
 
 			send_remove_player_packet(client, player);
 
+			clients[player].view_lock.lock();
 			// 상대방 뷰 리스트에 여전히 내가 있다면 삭제해주기
 			if (0 < clients[player].viewlist.count(client)) {
-				clients[player].myLock.lock();
 				clients[player].viewlist.erase(client);
-				clients[player].myLock.unlock();
+				clients[player].view_lock.unlock();
 
 				send_remove_player_packet(player, client);
-			}
+			} else 	clients[player].view_lock.unlock();
+
 		}
 
 
@@ -858,9 +842,9 @@ void process_packet(int client, char * packet) {
 		for (auto &npc : old_npc_vl) {
 			// 옛날 시야에는 있었지만 새로운 시야에 없으면
 			if (0 == new_npc_vl.count(npc)) {
-				clients[client].myLock.lock();
+				clients[client].view_lock.lock();
 				clients[client].npc_viewlist.erase(npc);
-				clients[client].myLock.unlock();
+				clients[client].view_lock.unlock();
 
 				send_remove_npc_packet(client, npc);
 			}
@@ -871,9 +855,9 @@ void process_packet(int client, char * packet) {
 			if (0 < old_npc_vl.count(npc)) continue; // 옛날 뷰리스트에 있으면 통과~
 
 			// 없으면 내 뷰리스트에 추가해주자
-			clients[client].myLock.lock();
+			clients[client].view_lock.lock();
 			clients[client].npc_viewlist.insert(npc);
-			clients[client].myLock.unlock();
+			clients[client].view_lock.unlock();
 
 			send_put_npc_packet(client, npc);
 
@@ -935,9 +919,9 @@ void process_db_event(DB_EVENT_ST &ev) {
 				if (false == is_eyesight(new_id, i)) continue;
 				if (i == new_id) continue;
 
-				clients[i].myLock.lock();
+				clients[i].view_lock.lock();
 				clients[i].viewlist.insert(new_id);
-				clients[i].myLock.unlock();
+				clients[i].view_lock.unlock();
 
 				send_put_player_packet(i, new_id);
 			}
@@ -949,9 +933,9 @@ void process_db_event(DB_EVENT_ST &ev) {
 				if (i == new_id) continue;
 				if (false == is_eyesight(i, new_id)) continue;
 
-				clients[new_id].myLock.lock();
+				clients[new_id].view_lock.lock();
 				clients[new_id].viewlist.insert(i);
-				clients[new_id].myLock.unlock();
+				clients[new_id].view_lock.unlock();
 
 				send_put_player_packet(new_id, i);
 			}
@@ -961,9 +945,9 @@ void process_db_event(DB_EVENT_ST &ev) {
 			for (int i = 0; i < MAX_NPC; ++i) {
 				if (false == is_player_npc_eyesight(new_id, i)) continue;
 
-				clients[new_id].myLock.lock();
+				clients[new_id].view_lock.lock();
 				clients[new_id].npc_viewlist.insert(i);
-				clients[new_id].myLock.unlock();
+				clients[new_id].view_lock.unlock();
 
 				send_put_npc_packet(new_id, i);
 
@@ -997,18 +981,23 @@ void disconnect_client(int id) {
 		for (int i = 0; i < MAX_USER; ++i) {
 			if (false == clients[i].in_use) continue;
 			if (i == id) continue;
-			if (0 == clients[i].viewlist.count(id)) continue; // 다른 클라이언트의 뷰리스트에 내가 없으면 넘어가기
-
-			clients[i].myLock.lock();
+			clients[i].view_lock.lock();
+			if (0 == clients[i].viewlist.count(id)) {
+				clients[i].view_lock.unlock();
+				continue; // 다른 클라이언트의 뷰리스트에 내가 없으면 넘어가기
+			}
 			clients[i].viewlist.erase(id);
-			clients[i].myLock.unlock();
+			clients[i].view_lock.unlock();
 
 			send_remove_player_packet(i, id);
 		}
 		closesocket(clients[id].socket);
 		clients[id].in_use = false;
 		clients[id].is_login_ok = false;
+
+		clients[id].view_lock.lock();
 		clients[id].viewlist.clear();
+		clients[id].view_lock.unlock();
 	}
 }
 
@@ -1220,14 +1209,18 @@ void move_npc(int npc_id) {
 		// 만약 이동 전 뷰리스트에 플레이어가 없다면
 		if (0 == old_vl.count(pl)) {
 			// 그 플레이어 뷰리스트에 내가 있는지 확인하고 없으면 넣어주기
+			clients[pl].view_lock.lock();
 			if (0 == clients[pl].npc_viewlist.count(npc_id)) {
-				clients[pl].myLock.lock();
 				clients[pl].npc_viewlist.insert(npc_id);
-				clients[pl].myLock.unlock();
+				clients[pl].view_lock.unlock();
 
 				send_put_npc_packet(pl, npc_id);
 			}
-			else send_npc_pos_packet(pl, npc_id);
+			else {
+				clients[pl].view_lock.unlock();
+
+				send_npc_pos_packet(pl, npc_id);
+			}
 		}
 		else send_npc_pos_packet(pl, npc_id);
 	}
@@ -1236,11 +1229,15 @@ void move_npc(int npc_id) {
 	for (auto &pl : old_vl) {
 		// 새로운 뷰리스트에 없는 플레이어는
 		if (0 == new_vl.count(pl)) {
+			clients[pl].view_lock.lock();
+
 			// 그 플레이어의 뷰리스트에 내가 있는지 확인하고 있으면 지워주기
 			if (0 < clients[pl].npc_viewlist.count(npc_id)) {
+				clients[pl].view_lock.unlock();
+
 				clients[pl].npc_viewlist.erase(npc_id);
 				send_remove_npc_packet(pl, npc_id);
-			}
+			} else 	clients[pl].view_lock.unlock();
 		}
 	}
 
