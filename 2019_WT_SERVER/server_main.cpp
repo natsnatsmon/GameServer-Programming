@@ -9,6 +9,7 @@ WIN recv()&send    : 데이터 읽고쓰기
 6. close()
 WIN closesocket    : 소켓종료
 */
+
 #define _CRT_SECURE_NO_WARNINGS
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <iostream>
@@ -22,39 +23,46 @@ using namespace std;
 #include <queue>
 #include <chrono>
 using namespace chrono;
+#include <locale.h>
 #include <windows.h>  
 #include <stdio.h>  
 #define UNICODE  
 #include <sqlext.h>  
 
-
+extern "C" {
+	#include "include\lua.h"
+	#include "include\lauxlib.h"
+	#include "include\lualib.h"
+}
 
 #pragma comment(lib, "Ws2_32.lib")
+#pragma comment(lib, "lua53.lib")
 
 #define MAX_BUFFER        1024
 #define VIEW_RADIUS			8
 #define NPC_RADIUS			9
 #define MAX_ID				20
 
-enum EVENT_TYPE { EVT_MOVE, EVT_HEAL, EVT_RECV, EVT_SEND,
-				  DB_EVT_SEARCH, DB_EVT_SAVE };
+enum EVENT_TYPE {
+	EVT_PLAYER_MOVE_DETECT, 
+	EVT_MOVE, EVT_HEAL, EVT_RECV, EVT_SEND,
+	DB_EVT_SEARCH, DB_EVT_SAVE 
+};
 
 // 오버랩드 구조체를 확장해서 쓰자
 struct OVER_EX{
-	WSAOVERLAPPED over;
-	WSABUF dataBuffer;
-	char messageBuffer[MAX_BUFFER];
-	EVENT_TYPE event_t;
+	WSAOVERLAPPED	over;
+	WSABUF			dataBuffer;
+	char			messageBuffer[MAX_BUFFER];
+	EVENT_TYPE		event_t;
+	int				target_player;
 };
 
 class SOCKETINFO
 {
 public:
-//	mutex access_lock;
 	bool in_use;
 	// 클라이언트마다 하나씩 있어야댐.. 하나로 공유하면 덮어써버리는거다... 밑에 4개는 클라마다 꼭 있어야 하는 것.. 必수要소
-	unordered_set <int> viewlist;
-	unordered_set <int> npc_viewlist;
 	mutex myLock;
 	OVER_EX over_ex;
 	SOCKET socket;
@@ -63,6 +71,8 @@ public:
 	int x, y;
 	bool is_login_ok;
 	char login_id[MAX_ID];
+	unordered_set <int> viewlist;
+	unordered_set <int> npc_viewlist;
 
 	SOCKETINFO() {
 		in_use = false;
@@ -78,6 +88,17 @@ class NPCINFO {
 public :
 	int x, y;
 	bool is_sleeping;
+	lua_State *L;
+	mutex lua_lock;
+
+	NPCINFO() {
+		is_sleeping = true;
+		L = luaL_newstate();
+		luaL_openlibs(L);
+
+		luaL_loadfile(L, "monster_ai.lua");
+		lua_pcall(L, 0, 0, 0);
+	}
 };
 NPCINFO npcs[MAX_NPC];
 
@@ -108,6 +129,10 @@ void db_err_display(SQLHANDLE hHandle, SQLSMALLINT hType, RETCODE RetCode);
 void add_timer(int obj_id, EVENT_TYPE et, high_resolution_clock::time_point start_time);
 void add_db_evt(int client_id, EVENT_TYPE et);
 
+int API_get_x(lua_State *L);
+int API_get_y(lua_State *L);
+int API_send_message(lua_State *L);
+
 void Init();
 
 int do_accept();
@@ -119,6 +144,7 @@ bool search_user_id(int client);
 bool save_user_data(int client);
 
 void send_packet(int client, void *packet);
+void send_chat_packet(int clients, int new_id, wchar_t *msg);
 
 void send_pos_packet(int client, int pl);
 void send_npc_pos_packet(int client, int npc);
@@ -149,7 +175,6 @@ bool is_sleeping(int npc_id);
 
 //bool Is_Near_Object(int a, int b);
 
-
 int main() {
 
 	vector <thread> worker_threads;
@@ -174,6 +199,7 @@ int main() {
 		th.join();
 	}
 }
+
 
 void err_display(const char * msg, int err_no)
 {
@@ -219,6 +245,36 @@ void add_db_evt(int client_id, EVENT_TYPE et) {
 	db_lock.unlock();
 }
 
+int API_get_x(lua_State *L) {
+	int obj_id = (int)lua_tonumber(L, -1);
+	lua_pop(L, 2);
+	int x = npcs[obj_id].x;
+	lua_pushnumber(L, x);
+	return 1;
+}
+int API_get_y(lua_State *L) {
+	int obj_id = (int)lua_tonumber(L, -1);
+	lua_pop(L, 2);
+	int y = npcs[obj_id].y;
+	lua_pushnumber(L, y);
+	return 1;
+}
+int API_send_message(lua_State *L) {
+	int client_id = (int)lua_tonumber(L, -3);
+	int from_id = (int)lua_tonumber(L, -2);
+	char *mess = (char *)lua_tostring(L, -1); // 루아는 유니코드를 지원하지 않는다..
+	wchar_t wmess[MAX_STR_LEN];
+
+	lua_pop(L, 4);
+
+	size_t wlen, len;
+	len = strnlen_s(mess, MAX_STR_LEN);
+	mbstowcs_s(&wlen, wmess, len, mess, _TRUNCATE);
+
+	send_chat_packet(client_id, from_id, wmess);
+	return 1;
+}
+
 void Init() {
 	for (int pl_id = 0; pl_id < MAX_USER; ++pl_id) {
 		clients[pl_id].in_use = false;
@@ -229,9 +285,20 @@ void Init() {
 		npcs[npc_id].x = rand() % WORLD_WIDTH;
 		npcs[npc_id].y = rand() % WORLD_HEIGHT;
 		npcs[npc_id].is_sleeping = true;
-		//add_timer(npc_id, EVT_MOVE, high_resolution_clock::now() + 1s);
+		add_timer(npc_id, EVT_MOVE, high_resolution_clock::now() + 1s);
+		
+		lua_State *L = npcs[npc_id].L;
+		lua_getglobal(L, "set_uid");
+		lua_pushnumber(L, npc_id);
+		lua_pcall(L, 1, 0, 0);
+		lua_register(L, "API_get_x", API_get_x);
+		lua_register(L, "API_get_y", API_get_y);
+		lua_register(L, "API_send_message", API_send_message);
 	}
+
+	wcout << L"** Initialize 완료!! ** \n \n \n";
 }
+
 
 int do_accept()
 {
@@ -595,6 +662,15 @@ void send_packet(int client, void *packet) {
 	//delete ov;
 }
 
+void send_chat_packet(int client, int from_id, wchar_t *msg) {
+	sc_packet_chat packet;
+	packet.id = from_id;
+	packet.size = sizeof(packet);
+	packet.type = SC_CHAT;
+	wcscpy(packet.message, msg);
+	send_packet(client, &packet);
+}
+
 void send_pos_packet(int client, int pl) {
 	sc_packet_move_player packet;
 	packet.id = pl;
@@ -788,9 +864,6 @@ void process_packet(int client, char * packet) {
 
 				send_remove_npc_packet(client, npc);
 			}
-			//		else { 
-			//			send_put_npc_packet(client, npc);
-			//		}
 		}
 
 		// Case 2. old_vl 에 없음, new_vl 에는 있음 -> 내 시야에 들어온거임~
@@ -805,6 +878,14 @@ void process_packet(int client, char * packet) {
 			send_put_npc_packet(client, npc);
 
 			wakeup_NPC(npc);
+		}
+
+		for (auto &monster : new_npc_vl) {
+			OVER_EX *ex_over = new OVER_EX;
+			ex_over->event_t = EVT_PLAYER_MOVE_DETECT;
+			ex_over->target_player = client;
+
+			PostQueuedCompletionStatus(g_iocp, 1, monster, &ex_over->over);
 		}
 	}
 }
@@ -1003,15 +1084,15 @@ void worker_thread() {
 		}
 		else if (EVT_SEND == over_ex->event_t) {
 			if (false == over_ex->event_t)
-			delete over_ex;
-			}
+				delete over_ex;
+		}
 		else if (EVT_MOVE == over_ex->event_t) {
 			EVENT_ST ev;
 			ev.obj_id = key;
 			ev.start_time = high_resolution_clock::now();
 			ev.type = EVT_MOVE;
 
-		//	cout << "EVT_MOVE " << ev.obj_id << '\n';
+			//	cout << "EVT_MOVE " << ev.obj_id << '\n';
 			process_event(ev);
 			delete over_ex;
 		}
@@ -1029,6 +1110,18 @@ void worker_thread() {
 			dev.type = DB_EVT_SAVE;
 
 			process_db_event(dev);
+			delete over_ex;
+		}
+		else if (EVT_PLAYER_MOVE_DETECT == over_ex->event_t) {
+			lua_State *L = npcs[key].L;
+			int player_id = over_ex->target_player;
+
+			// 워커스레드가 돌리기때문에 락이 필요하다
+			npcs[key].lua_lock.lock();
+			lua_getglobal(L, "event_player_move");
+			lua_pushnumber(L, player_id);
+			lua_pcall(L, 1, 0, 0);
+			npcs[key].lua_lock.unlock();
 			delete over_ex;
 		}
 		else {
@@ -1199,3 +1292,5 @@ bool is_npc_eyesight(int client, int npc) {
 bool is_sleeping(int npc_id) {
 	return npcs[npc_id].is_sleeping;
 }
+
+
