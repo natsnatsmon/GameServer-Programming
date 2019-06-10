@@ -71,6 +71,7 @@ char	packet_buffer[BUF_SIZE];
 DWORD		in_packet_size = 0;
 int		saved_packet_size = 0;
 int		g_myid;
+bool	is_login_ok = false;
 
 int		g_left_x = 0;
 int     g_top_y = 0;
@@ -87,6 +88,7 @@ void ProcessPacket(char *ptr)
 		sc_packet_login_ok *packet = 
 			reinterpret_cast<sc_packet_login_ok *>(ptr);
 		g_myid = packet->id;
+		is_login_ok = true;
 	}
 
 	case SC_PUT_PLAYER:
@@ -178,7 +180,6 @@ void ProcessPacket(char *ptr)
 		break;
 
 	}
-	/*
 	case SC_CHAT:
 	{
 		sc_packet_chat *my_packet = reinterpret_cast<sc_packet_chat *>(ptr);
@@ -187,17 +188,26 @@ void ProcessPacket(char *ptr)
 			wcsncpy_s(player.message, my_packet->message, 256);
 			player.message_time = GetTickCount();
 		}
-		else if (other_id < NPC_START) {
+		else if (other_id < MAX_USER) {
 			wcsncpy_s(skelaton[other_id].message, my_packet->message, 256);
 			skelaton[other_id].message_time = GetTickCount();
 		}
 		else {
-			wcsncpy_s(npc[other_id - NPC_START].message, my_packet->message, 256);
-			npc[other_id - NPC_START].message_time = GetTickCount();
+			wcsncpy(npc[other_id].message, my_packet->message, 256);
+			npc[other_id].message_time = GetTickCount();
 		}
 		break;
 
-	} */
+	}
+	//case SC_NPC_CHAT:
+	//{
+	//	sc_packet_chat *my_packet = reinterpret_cast<sc_packet_chat *>(ptr);
+	//	int other_id = my_packet->id;
+	//	wcsncpy(npc[other_id].message, my_packet->message, 256);
+	//	npc[other_id].message_time = GetTickCount();
+	//	break;
+
+	//}
 	default:
 		printf("Unknown PACKET type [%d]\n", ptr[1]);
 	}
@@ -274,6 +284,10 @@ BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 				int error_code = WSAGetLastError();
 				printf("Error while sending packet [%d]", error_code);
 			}
+
+			EnableWindow(hSendButton, FALSE);
+
+			EndDialog(hDlg, IDCANCEL);
 
 			SendMessage(hIdInputBox, EM_SETSEL, 0, -1);
 			return TRUE;

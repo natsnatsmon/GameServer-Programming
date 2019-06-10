@@ -9,6 +9,7 @@ WIN recv()&send    : 데이터 읽고쓰기
 6. close()
 WIN closesocket    : 소켓종료
 */
+
 #define _CRT_SECURE_NO_WARNINGS
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <iostream>
@@ -22,46 +23,56 @@ using namespace std;
 #include <queue>
 #include <chrono>
 using namespace chrono;
+#include <locale.h>
 #include <windows.h>  
 #include <stdio.h>  
 #define UNICODE  
 #include <sqlext.h>  
 
-
+extern "C" {
+#include "include\lua.h"
+#include "include\lauxlib.h"
+#include "include\lualib.h"
+}
 
 #pragma comment(lib, "Ws2_32.lib")
+#pragma comment(lib, "lua53.lib")
 
 #define MAX_BUFFER        1024
 #define VIEW_RADIUS			8
 #define NPC_RADIUS			9
 #define MAX_ID				20
 
-enum EVENT_TYPE { EVT_MOVE, EVT_HEAL, EVT_RECV, EVT_SEND, 
-				  DB_EVT_SEARCH_ID, DB_EVT_SAVE };
+enum EVENT_TYPE {
+	EVT_PLAYER_MOVE_DETECT,
+	EVT_MOVE, EVT_HEAL, EVT_RECV, EVT_SEND,
+	DB_EVT_SEARCH, DB_EVT_SAVE
+};
 
 // 오버랩드 구조체를 확장해서 쓰자
-struct OVER_EX{
-	WSAOVERLAPPED over;
-	WSABUF dataBuffer;
-	char messageBuffer[MAX_BUFFER];
-	EVENT_TYPE event_t;
+struct OVER_EX {
+	WSAOVERLAPPED	over;
+	WSABUF			dataBuffer;
+	char			messageBuffer[MAX_BUFFER];
+	EVENT_TYPE		event_t;
+	int				target_player;
 };
 
 class SOCKETINFO
 {
 public:
-//	mutex access_lock;
 	bool in_use;
 	// 클라이언트마다 하나씩 있어야댐.. 하나로 공유하면 덮어써버리는거다... 밑에 4개는 클라마다 꼭 있어야 하는 것.. 必수要소
-	unordered_set <int> viewlist;
-	unordered_set <int> npc_viewlist;
-	mutex myLock;
+	mutex view_lock;
 	OVER_EX over_ex;
 	SOCKET socket;
 	char packetBuffer[MAX_BUFFER];
 	int prev_size;
 	int x, y;
+	bool is_login_ok;
 	char login_id[MAX_ID];
+	unordered_set <int> viewlist;
+	unordered_set <int> npc_viewlist;
 
 	SOCKETINFO() {
 		in_use = false;
@@ -74,9 +85,20 @@ SOCKETINFO clients[MAX_USER];
 
 // NPC 구현 첫번째
 class NPCINFO {
-public :
+public:
 	int x, y;
 	bool is_sleeping;
+	lua_State *L;
+	mutex lua_lock;
+
+	NPCINFO() {
+		is_sleeping = true;
+		L = luaL_newstate();
+		luaL_openlibs(L);
+
+		luaL_loadfile(L, "monster_ai.lua");
+		lua_pcall(L, 0, 0, 0);
+	}
 };
 NPCINFO npcs[MAX_NPC];
 
@@ -95,6 +117,7 @@ struct DB_EVENT_ST {
 };
 
 mutex timer_lock;
+mutex db_lock;
 
 priority_queue<EVENT_ST> timer_queue;
 queue<DB_EVENT_ST> db_queue;
@@ -103,9 +126,12 @@ HANDLE g_iocp;
 
 void err_display(const char * msg, int err_no);
 void db_err_display(SQLHANDLE hHandle, SQLSMALLINT hType, RETCODE RetCode);
-
 void add_timer(int obj_id, EVENT_TYPE et, high_resolution_clock::time_point start_time);
 void add_db_evt(int client_id, EVENT_TYPE et);
+
+int API_get_x(lua_State *L);
+int API_get_y(lua_State *L);
+int API_send_message(lua_State *L);
 
 void Init();
 
@@ -114,10 +140,11 @@ void do_timer();
 void do_transaction();
 void do_recv(int id);
 
-bool check_user_id(int client);
-void save_user_data(int client);
+bool search_user_id(int client);
+bool save_user_data(int client);
 
 void send_packet(int client, void *packet);
+void send_chat_packet(int clients, int new_id, wchar_t *msg);
 
 void send_pos_packet(int client, int pl);
 void send_npc_pos_packet(int client, int npc);
@@ -132,6 +159,7 @@ void send_put_npc_packet(int clients, int npc);
 
 void process_packet(int client, char *packet);
 void process_event(EVENT_ST &ev);
+void process_db_event(DB_EVENT_ST &ev);
 
 void disconnect_client(int id);
 
@@ -146,7 +174,6 @@ bool is_npc_eyesight(int client_id, int npc_id);
 bool is_sleeping(int npc_id);
 
 //bool Is_Near_Object(int a, int b);
-
 
 int main() {
 
@@ -172,6 +199,7 @@ int main() {
 		th.join();
 	}
 }
+
 
 void err_display(const char * msg, int err_no)
 {
@@ -212,190 +240,45 @@ void add_timer(int obj_id, EVENT_TYPE et, high_resolution_clock::time_point star
 	timer_lock.unlock();
 }
 void add_db_evt(int client_id, EVENT_TYPE et) {
+	db_lock.lock();
 	db_queue.emplace(DB_EVENT_ST{ client_id, et });
+	db_lock.unlock();
 }
 
-bool check_user_id(int client) {
-	SQLHENV henv;
-	SQLHDBC hdbc;
-	SQLHSTMT hstmt = 0;
-	SQLRETURN retcode;
-
-	SQLINTEGER uposx, uposy;
-	SQLWCHAR uid[10];
-	SQLLEN cb_uid = 0, cb_uposx = 0, cb_uposy = 0;
-
-	setlocale(LC_ALL, "korean");
-
-	// Allocate environment handle  
-	retcode = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &henv);
-
-	// Set the ODBC version environment attribute  
-	if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
-		retcode = SQLSetEnvAttr(henv, SQL_ATTR_ODBC_VERSION, (SQLPOINTER*)SQL_OV_ODBC3, 0);
-
-		// Allocate connection handle  
-		if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
-			retcode = SQLAllocHandle(SQL_HANDLE_DBC, henv, &hdbc);
-
-			// Set login timeout to 5 seconds  
-			if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
-				SQLSetConnectAttr(hdbc, SQL_LOGIN_TIMEOUT, (SQLPOINTER)5, 0);
-
-				// Connect to data source  
-				retcode = SQLConnect(hdbc, (SQLWCHAR*)L"2019_WT_2016184017", SQL_NTS, (SQLWCHAR*)NULL, 0, NULL, 0);
-
-				// Allocate statement handle  
-				if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
-					cout << "SQL DB Connect OK!!\n";
-
-					retcode = SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt);
-
-					char str[128] = "EXEC select_user_data ";
-					strcat(str, clients[client].login_id);
-					printf("%s\n", str);
-
-					// 여기를 봐라~!!~!!!!!!!!!!!!!!!!1
-					// SQLExecDirect하면 SQL 명령어가 실행됨
-					// EXEC 하고 내장함수 이름, 파라미터 주면 실행된다!!!!
-					
-					retcode = SQLExecDirect(hstmt, (SQLWCHAR *)str, SQL_NTS);
-
-					//					retcode = SQLExecDirect(hstmt, (SQLWCHAR *)L"SELECT user_id, user_name, user_level FROM user_table ORDER BY 2, 1, 3", SQL_NTS);
-					if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
-
-						// Bind columns 1, 2, and 3  
-						//retcode = SQLBindCol(hstmt, 1, SQL_INTEGER, &uid, 100, &cb_uid);
-						retcode = SQLBindCol(hstmt, 1, SQL_C_CHAR, uid, 20, &cb_uid);
-						retcode = SQLBindCol(hstmt, 2, SQL_INTEGER, &uposx, 10, &cb_uposx);
-						retcode = SQLBindCol(hstmt, 3, SQL_INTEGER, &uposy, 10, &cb_uposy);
-
-						// Fetch and print each row of data. On an error, display a message and exit.  
-						for (int i = 0; ; i++) {
-							// SQLFetch로 꺼낸다
-							retcode = SQLFetch(hstmt);
-							if (retcode == SQL_ERROR || retcode == SQL_SUCCESS_WITH_INFO)
-								printf("error\n");
-							if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO)
-							{
-								wprintf(L"%d: %S %d %d\n", i + 1, uid, uposx, uposy);
-								clients[client].x = uposx;
-								clients[client].y = uposy;
-								return true;
-							}
-							else // EOF일때..! EOD일수도 (End Of File / End Of Data)
-							{
-								return false;
-							//	break;
-							}
-						}
-					}
-					else {
-						db_err_display(hstmt, SQL_HANDLE_STMT, retcode);
-					}
-
-					// Process data  
-					if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
-						SQLCancel(hstmt);
-						SQLFreeHandle(SQL_HANDLE_STMT, hstmt);
-					}
-
-					SQLDisconnect(hdbc);
-				}
-
-				SQLFreeHandle(SQL_HANDLE_DBC, hdbc);
-			}
-		}
-		SQLFreeHandle(SQL_HANDLE_ENV, henv);
-	}
+int API_get_x(lua_State *L) {
+	int obj_id = (int)lua_tonumber(L, -1);
+	lua_pop(L, 2);
+	int x = npcs[obj_id].x;
+	lua_pushnumber(L, x);
+	return 1;
 }
+int API_get_y(lua_State *L) {
+	int obj_id = (int)lua_tonumber(L, -1);
+	lua_pop(L, 2);
+	int y = npcs[obj_id].y;
+	lua_pushnumber(L, y);
+	return 1;
+}
+int API_send_message(lua_State *L) {
+	int client_id = (int)lua_tonumber(L, -3);
+	int from_id = (int)lua_tonumber(L, -2);
+	char *mess = (char *)lua_tostring(L, -1); // 루아는 유니코드를 지원하지 않는다..
+	wchar_t wmess[MAX_STR_LEN];
 
-void save_user_data(int client) {
-	SQLHENV henv;
-	SQLHDBC hdbc;
-	SQLHSTMT hstmt = 0;
-	SQLRETURN retcode;
+	lua_pop(L, 4);
 
-	SQLINTEGER uposx, uposy;
-	SQLWCHAR uid[10];
-	SQLLEN cb_uid = 0, cb_uposx = 0, cb_uposy = 0;
+	size_t wlen, len;
+	len = strnlen_s(mess, MAX_STR_LEN);
+	mbstowcs_s(&wlen, wmess, len, mess, _TRUNCATE);
 
-	setlocale(LC_ALL, "korean");
-
-	// Allocate environment handle  
-	retcode = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &henv);
-
-	// Set the ODBC version environment attribute  
-	if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
-		retcode = SQLSetEnvAttr(henv, SQL_ATTR_ODBC_VERSION, (SQLPOINTER*)SQL_OV_ODBC3, 0);
-
-		// Allocate connection handle  
-		if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
-			retcode = SQLAllocHandle(SQL_HANDLE_DBC, henv, &hdbc);
-
-			// Set login timeout to 5 seconds  
-			if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
-				SQLSetConnectAttr(hdbc, SQL_LOGIN_TIMEOUT, (SQLPOINTER)5, 0);
-
-				// Connect to data source  
-				retcode = SQLConnect(hdbc, (SQLWCHAR*)L"2019_WT_2016184017", SQL_NTS, (SQLWCHAR*)NULL, 0, NULL, 0);
-
-				// Allocate statement handle  
-				if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
-					cout << "SQL DB Connect OK!!\n";
-
-					retcode = SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt);
-
-
-					// 여기를 봐라~!!~!!!!!!!!!!!!!!!!1
-					// SQLExecDirect하면 SQL 명령어가 실행됨
-					// EXEC 하고 내장함수 이름, 파라미터 주면 실행된다!!!!
-					retcode = SQLExecDirect(hstmt, (SQLWCHAR *)L"EXEC select_user_data asdf", SQL_NTS);
-
-					//					retcode = SQLExecDirect(hstmt, (SQLWCHAR *)L"SELECT user_id, user_name, user_level FROM user_table ORDER BY 2, 1, 3", SQL_NTS);
-					if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
-
-						// Bind columns 1, 2, and 3  
-						//retcode = SQLBindCol(hstmt, 1, SQL_INTEGER, &uid, 100, &cb_uid);
-						retcode = SQLBindCol(hstmt, 1, SQL_C_CHAR, uid, 20, &cb_uid);
-						retcode = SQLBindCol(hstmt, 2, SQL_INTEGER, &uposx, 10, &cb_uposx);
-						retcode = SQLBindCol(hstmt, 3, SQL_INTEGER, &uposy, 10, &cb_uposy);
-
-						// Fetch and print each row of data. On an error, display a message and exit.  
-						for (int i = 0; ; i++) {
-							// SQLFetch로 꺼낸다
-							retcode = SQLFetch(hstmt);
-							if (retcode == SQL_ERROR || retcode == SQL_SUCCESS_WITH_INFO)
-								printf("error\n");
-							if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO)
-								wprintf(L"%d: %S %d %d\n", i + 1, uid, uposx, uposy);
-							else // EOF일때..! EOD일수도 (End Of File / End Of Data)
-								break;
-						}
-					}
-					else {
-						db_err_display(hstmt, SQL_HANDLE_STMT, retcode);
-					}
-
-					// Process data  
-					if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
-						SQLCancel(hstmt);
-						SQLFreeHandle(SQL_HANDLE_STMT, hstmt);
-					}
-
-					SQLDisconnect(hdbc);
-				}
-
-				SQLFreeHandle(SQL_HANDLE_DBC, hdbc);
-			}
-		}
-		SQLFreeHandle(SQL_HANDLE_ENV, henv);
-	}
+	send_chat_packet(client_id, from_id, wmess);
+	return 1;
 }
 
 void Init() {
 	for (int pl_id = 0; pl_id < MAX_USER; ++pl_id) {
 		clients[pl_id].in_use = false;
+		clients[pl_id].is_login_ok = false;
 	}
 
 	for (int npc_id = 0; npc_id < MAX_NPC; ++npc_id) {
@@ -403,10 +286,19 @@ void Init() {
 		npcs[npc_id].y = rand() % WORLD_HEIGHT;
 		npcs[npc_id].is_sleeping = true;
 		add_timer(npc_id, EVT_MOVE, high_resolution_clock::now() + 1s);
+
+		lua_State *L = npcs[npc_id].L;
+		lua_getglobal(L, "set_uid");
+		lua_pushnumber(L, npc_id);
+		lua_pcall(L, 1, 0, 0);
+		lua_register(L, "API_get_x", API_get_x);
+		lua_register(L, "API_get_y", API_get_y);
+		lua_register(L, "API_send_message", API_send_message);
 	}
 
-	timer_queue.empty();
+	wcout << L"** Initialize 완료!! ** \n \n \n";
 }
+
 
 int do_accept()
 {
@@ -428,7 +320,7 @@ int do_accept()
 
 	// 서버정보 객체설정
 	SOCKADDR_IN serverAddr;
-//	memset(&serverAddr, 0, sizeof(SOCKADDR_IN));
+	//	memset(&serverAddr, 0, sizeof(SOCKADDR_IN));
 	serverAddr.sin_family = PF_INET;
 	serverAddr.sin_port = htons(SERVER_PORT);
 	serverAddr.sin_addr.S_un.S_addr = htonl(INADDR_ANY);
@@ -457,7 +349,7 @@ int do_accept()
 
 	SOCKADDR_IN clientAddr;
 	int addrLen = sizeof(SOCKADDR_IN);
-//	memset(&clientAddr, 0, addrLen);
+	//	memset(&clientAddr, 0, addrLen);
 	SOCKET clientSocket;
 	DWORD flags;
 
@@ -487,10 +379,11 @@ int do_accept()
 		// recv 준비
 		clients[new_id].socket = clientSocket;
 		clients[new_id].prev_size = 0;
-		clients[new_id].x = clients[new_id].y = 400;
+		clients[new_id].x = clients[new_id].y = 50;
+		clients[new_id].view_lock.lock();
 		clients[new_id].viewlist.clear(); // 뷰리스트 초기화
-		ZeroMemory(clients[new_id].login_id, sizeof(clients[new_id].login_id));
-		ZeroMemory(&clients[new_id].over_ex.over, 
+		clients[new_id].view_lock.unlock();
+		ZeroMemory(&clients[new_id].over_ex.over,
 			sizeof(clients[new_id].over_ex.over));
 		flags = 0;
 
@@ -529,24 +422,195 @@ void do_recv(int id) {
 
 }
 
-void do_transaction() {
-	while (true) {
-		this_thread::sleep_for(10ms);
-		while (true) {
-			if (true == db_queue.empty()) break;
+bool search_user_id(int client) {
+	SQLHENV henv;
+	SQLHDBC hdbc;
+	SQLHSTMT hstmt = 0;
+	SQLRETURN retcode;
+
+	SQLWCHAR uid[20];
+	SQLINTEGER uposx, uposy;
+	SQLLEN cb_uid = 0, cb_uposx = 0, cb_uposy = 0;
+	wchar_t buf[128] = {};
+
+	setlocale(LC_ALL, "korean");
+
+	// Allocate environment handle  
+	retcode = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &henv);
+
+	// Set the ODBC version environment attribute  
+	if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+		retcode = SQLSetEnvAttr(henv, SQL_ATTR_ODBC_VERSION, (SQLPOINTER*)SQL_OV_ODBC3, 0);
+
+		// Allocate connection handle  
+		if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+			retcode = SQLAllocHandle(SQL_HANDLE_DBC, henv, &hdbc);
+
+			// Set login timeout to 5 seconds  
+			if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+				SQLSetConnectAttr(hdbc, SQL_LOGIN_TIMEOUT, (SQLPOINTER)5, 0);
+
+				// Connect to data source  
+				retcode = SQLConnect(hdbc, (SQLWCHAR*)L"2019_WT_2016184017", SQL_NTS, (SQLWCHAR*)NULL, 0, NULL, 0);
+
+				// Allocate statement handle  
+				if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+					cout << "SQL DB Connect OK!!\n";
+
+					retcode = SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt);
 
 
-			DB_EVENT_ST ev = db_queue.front();
+					char query[128] = "EXEC select_user_id ";
+					strcat(query, clients[client].login_id);
+					//					cout << "strcat 결과 : " << query << endl;
 
-			timer_queue.pop();
-			timer_lock.unlock();
+					mbstowcs(buf, query, strlen(query));
+					wcout << buf << endl;
+					// 여기를 봐라~!!~!!!!!!!!!!!!!!!!1
+					// SQLExecDirect하면 SQL 명령어가 실행됨
+					// EXEC 하고 내장함수 이름, 파라미터 주면 실행된다!!!!
+					retcode = SQLExecDirect(hstmt, (SQLWCHAR *)buf, SQL_NTS);
 
-			OVER_EX *over_ex = new OVER_EX;
-			over_ex->event_t = ev.type;
-			PostQueuedCompletionStatus(g_iocp, 1, ev.client_id, &over_ex->over);
+					if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+
+						// Bind columns 1, 2, and 3  
+						//retcode = SQLBindCol(hstmt, 1, SQL_INTEGER, &uid, 100, &cb_uid);
+						retcode = SQLBindCol(hstmt, 1, SQL_C_CHAR, uid, 20, &cb_uid);
+						retcode = SQLBindCol(hstmt, 2, SQL_INTEGER, &uposx, 10, &cb_uposx);
+						retcode = SQLBindCol(hstmt, 3, SQL_INTEGER, &uposy, 10, &cb_uposy);
+
+						retcode = SQLFetch(hstmt);
+						if (retcode == SQL_ERROR || retcode == SQL_SUCCESS_WITH_INFO)
+							printf("error\n");
+						if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+							wprintf(L"%S : %d %d\n", uid, uposx, uposy);
+							clients[client].x = uposx;
+							clients[client].y = uposy;
+							clients[client].is_login_ok = true;
+							return true;
+						}
+						else {
+							// EOF일때..! EOD일수도 (End Of File / End Of Data)
+							return false;
+						}
+
+					}
+					else {
+						db_err_display(hstmt, SQL_HANDLE_STMT, retcode);
+					}
+
+					// Process data  
+					if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+						SQLCancel(hstmt);
+						SQLFreeHandle(SQL_HANDLE_STMT, hstmt);
+					}
+
+					SQLDisconnect(hdbc);
+				}
+
+				SQLFreeHandle(SQL_HANDLE_DBC, hdbc);
+			}
 		}
+		SQLFreeHandle(SQL_HANDLE_ENV, henv);
 	}
 }
+bool save_user_data(int client) {
+	SQLHENV henv;
+	SQLHDBC hdbc;
+	SQLHSTMT hstmt = 0;
+	SQLRETURN retcode;
+
+	SQLWCHAR uid[20];
+	SQLINTEGER uposx, uposy;
+	SQLLEN cb_uid = 0, cb_uposx = 0, cb_uposy = 0;
+
+	setlocale(LC_ALL, "korean");
+
+	// Allocate environment handle  
+	retcode = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &henv);
+
+	// Set the ODBC version environment attribute  
+	if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+		retcode = SQLSetEnvAttr(henv, SQL_ATTR_ODBC_VERSION, (SQLPOINTER*)SQL_OV_ODBC3, 0);
+
+		// Allocate connection handle  
+		if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+			retcode = SQLAllocHandle(SQL_HANDLE_DBC, henv, &hdbc);
+
+			// Set login timeout to 5 seconds  
+			if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+				SQLSetConnectAttr(hdbc, SQL_LOGIN_TIMEOUT, (SQLPOINTER)5, 0);
+
+				// Connect to data source  
+				retcode = SQLConnect(hdbc, (SQLWCHAR*)L"2019_WT_2016184017", SQL_NTS, (SQLWCHAR*)NULL, 0, NULL, 0);
+
+				// Allocate statement handle  
+				if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+					cout << "SQL DB Connect OK!!\n";
+
+					retcode = SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt);
+
+					char query[128] = {};
+					char query_buf[30] = "EXEC update_user_data ";
+					char pos_x_buf[10] = {};
+					char pos_y_buf[10] = {};
+					wchar_t buf[128] = {};
+
+					_itoa(clients[client].x, pos_x_buf, 10);
+					_itoa(clients[client].y, pos_y_buf, 10);
+
+					sprintf(query, "%s%s, %s, %s", query_buf, clients[client].login_id, pos_x_buf, pos_y_buf);
+
+					cout << "결과 : " << query << endl;
+
+					mbstowcs(buf, query, strlen(query));
+					wcout << buf << endl;
+
+					// 여기를 봐라~!!~!!!!!!!!!!!!!!!!1
+					// SQLExecDirect하면 SQL 명령어가 실행됨
+					// EXEC 하고 내장함수 이름, 파라미터 주면 실행된다!!!!
+					retcode = SQLExecDirect(hstmt, (SQLWCHAR *)buf, SQL_NTS);
+
+					if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+
+						// Bind columns 1, 2, and 3  
+						//retcode = SQLBindCol(hstmt, 1, SQL_INTEGER, &uid, 100, &cb_uid);
+						retcode = SQLBindCol(hstmt, 1, SQL_C_CHAR, uid, 20, &cb_uid);
+						retcode = SQLBindCol(hstmt, 2, SQL_INTEGER, &uposx, 10, &cb_uposx);
+						retcode = SQLBindCol(hstmt, 3, SQL_INTEGER, &uposy, 10, &cb_uposy);
+
+						retcode = SQLFetch(hstmt);
+						if (retcode == SQL_ERROR || retcode == SQL_SUCCESS_WITH_INFO)
+							printf("error\n");
+						if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+							wprintf(L"%S : %d %d\n", uid, uposx, uposy);
+							return true;
+						}
+						else {
+							// EOF일때..! EOD일수도 (End Of File / End Of Data)
+							return false;
+						}
+					}
+					else {
+						db_err_display(hstmt, SQL_HANDLE_STMT, retcode);
+					}
+
+					// Process data  
+					if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+						SQLCancel(hstmt);
+						SQLFreeHandle(SQL_HANDLE_STMT, hstmt);
+					}
+
+					SQLDisconnect(hdbc);
+				}
+
+				SQLFreeHandle(SQL_HANDLE_DBC, hdbc);
+			}
+		}
+		SQLFreeHandle(SQL_HANDLE_ENV, henv);
+	}
+}
+
 
 void send_packet(int client, void *packet) {
 	char *p = reinterpret_cast<char *>(packet);
@@ -559,7 +623,7 @@ void send_packet(int client, void *packet) {
 	ZeroMemory(&ov->over, sizeof(ov->over));
 
 	// delete 해주지 않으면 메모리 누수 생기니까 해주자
-	
+
 	int error = WSASend(clients[client].socket, &ov->dataBuffer, 1, 0, 0, &ov->over, NULL);
 
 	if (0 != error) {
@@ -570,10 +634,19 @@ void send_packet(int client, void *packet) {
 		}
 	}
 	else {
-//		cout << "Non Overlapped Send return.\n";
+		//		cout << "Non Overlapped Send return.\n";
 	}
 
 	//delete ov;
+}
+
+void send_chat_packet(int client, int from_id, wchar_t *msg) {
+	sc_packet_chat packet;
+	packet.id = from_id;
+	packet.size = sizeof(packet);
+	packet.type = SC_CHAT;
+	wcscpy_s(packet.message, msg);
+	send_packet(client, &packet);
 }
 
 void send_pos_packet(int client, int pl) {
@@ -583,7 +656,7 @@ void send_pos_packet(int client, int pl) {
 	packet.type = SC_MOVE_PLAYER;
 	packet.x = clients[pl].x;
 	packet.y = clients[pl].y;
-	
+
 	//cout << "send pos packet client " << client << '\n';
 	//cout << clients[pl].x << ", " << clients[pl].y << '\n';
 
@@ -651,26 +724,23 @@ void send_put_npc_packet(int client, int npc) {
 }
 
 void process_packet(int client, char * packet) {
-	//cs_packet_id *idp = reinterpret_cast<cs_packet_id *>(packet);
-	//if (idp->type == CS_ID) {
-	//	cout << "접속 요청 id : " << idp->id << '\n';
-	//}
-
-	cs_packet_id *p = reinterpret_cast<cs_packet_id *>(packet);
-	
-	if (p->type == CS_ID) {
-		wcout << L"접속 요청 ID : " << p->id << '\n';
-		strcpy(clients[client].login_id, p->id);
-		cout << clients[client].login_id << '\n';
-		add_db_evt(client, DB_EVT_SEARCH_ID);
+	if (!clients[client].is_login_ok) {
+		cs_packet_id *idp = reinterpret_cast<cs_packet_id *>(packet);
+		wcout << L"접속 요청 ID : " << idp->id << '\n';
+		strcpy(clients[client].login_id, idp->id);
+		wcout << L"ID : " << clients[client].login_id << '\n';
+		add_db_evt(client, DB_EVT_SEARCH);
 	}
-
 	else {
+		cs_packet_id *p = reinterpret_cast<cs_packet_id *>(packet);
+
 		int x = clients[client].x;
 		int y = clients[client].y;
 
+		clients[client].view_lock.lock();
 		auto old_vl = clients[client].viewlist;
 		auto old_npc_vl = clients[client].npc_viewlist;
+		clients[client].view_lock.unlock();
 
 		switch (p->type) {
 		case CS_UP: if (y > 0) y--; break;
@@ -699,13 +769,14 @@ void process_packet(int client, char * packet) {
 		// Case 1. old_vl 에도 있고 new_vl에도 있는 플레이어 -> Send packet~
 		for (auto &player : old_vl) {
 			if (0 == new_vl.count(player)) continue; // 뉴 리스트에 없으면 넘어가~
+			clients[player].view_lock.lock();
 			if (0 < clients[player].viewlist.count(client)) { // 상대방 뷰리스트에 나도 있으면 걍 보내기~
+				clients[player].view_lock.unlock();
 				send_pos_packet(player, client);
 			}
 			else { // 나는 얘가 있는데 상대방 뷰리스트에 내가 없어.. 그럼 상대방 뷰리스트에 나를 추가하고 보내기
-				clients[player].myLock.lock();
 				clients[player].viewlist.insert(client);
-				clients[player].myLock.unlock();
+				clients[player].view_lock.unlock();
 
 				send_put_player_packet(player, client);
 			}
@@ -716,21 +787,23 @@ void process_packet(int client, char * packet) {
 			if (0 < old_vl.count(player)) continue; // 옛날 뷰리스트에 상대방이 있으면 통과~
 
 			// 없으면 내 뷰리스트에 추가해주자
-			clients[client].myLock.lock();
+			clients[client].view_lock.lock();
 			clients[client].viewlist.insert(player);
-			clients[client].myLock.unlock();
+			clients[client].view_lock.unlock();
 
 			send_put_player_packet(client, player);
 
+			clients[player].view_lock.lock();
 			// 상대방 뷰리스트에 내가 없으면 날 추가한다
 			if (0 == clients[player].viewlist.count(client)) {
-				clients[player].myLock.lock();
 				clients[player].viewlist.insert(client);
-				clients[player].myLock.unlock();
+				clients[player].view_lock.unlock();
 
 				send_put_player_packet(player, client);
 			}
 			else {
+				clients[player].view_lock.unlock();
+
 				send_pos_packet(player, client);
 			}
 		}
@@ -739,20 +812,22 @@ void process_packet(int client, char * packet) {
 		for (auto &player : old_vl) {
 			if (0 < new_vl.count(player)) continue; // 새로운 리스트에 상대방 있으면 넘어가~
 
-			clients[client].myLock.lock();
+			clients[client].view_lock.lock();
 			clients[client].viewlist.erase(player);
-			clients[client].myLock.unlock();
+			clients[client].view_lock.unlock();
 
 			send_remove_player_packet(client, player);
 
+			clients[player].view_lock.lock();
 			// 상대방 뷰 리스트에 여전히 내가 있다면 삭제해주기
 			if (0 < clients[player].viewlist.count(client)) {
-				clients[player].myLock.lock();
 				clients[player].viewlist.erase(client);
-				clients[player].myLock.unlock();
+				clients[player].view_lock.unlock();
 
 				send_remove_player_packet(player, client);
 			}
+			else 	clients[player].view_lock.unlock();
+
 		}
 
 
@@ -768,15 +843,12 @@ void process_packet(int client, char * packet) {
 		for (auto &npc : old_npc_vl) {
 			// 옛날 시야에는 있었지만 새로운 시야에 없으면
 			if (0 == new_npc_vl.count(npc)) {
-				clients[client].myLock.lock();
+				clients[client].view_lock.lock();
 				clients[client].npc_viewlist.erase(npc);
-				clients[client].myLock.unlock();
+				clients[client].view_lock.unlock();
 
 				send_remove_npc_packet(client, npc);
 			}
-			//		else { 
-			//			send_put_npc_packet(client, npc);
-			//		}
 		}
 
 		// Case 2. old_vl 에 없음, new_vl 에는 있음 -> 내 시야에 들어온거임~
@@ -784,15 +856,22 @@ void process_packet(int client, char * packet) {
 			if (0 < old_npc_vl.count(npc)) continue; // 옛날 뷰리스트에 있으면 통과~
 
 			// 없으면 내 뷰리스트에 추가해주자
-			clients[client].myLock.lock();
+			clients[client].view_lock.lock();
 			clients[client].npc_viewlist.insert(npc);
-			clients[client].myLock.unlock();
+			clients[client].view_lock.unlock();
 
 			send_put_npc_packet(client, npc);
 
 			wakeup_NPC(npc);
 		}
 
+		for (auto &monster : new_npc_vl) {
+			OVER_EX *ex_over = new OVER_EX;
+			ex_over->event_t = EVT_PLAYER_MOVE_DETECT;
+			ex_over->target_player = client;
+
+			PostQueuedCompletionStatus(g_iocp, 1, monster, &ex_over->over);
+		}
 	}
 }
 
@@ -826,24 +905,24 @@ void process_event(EVENT_ST &ev) {
 		break;
 	}
 }
-
 void process_db_event(DB_EVENT_ST &ev) {
 	int new_id = ev.client_id;
 	switch (ev.type) {
-	case DB_EVT_SEARCH_ID : 
-		if (check_user_id(ev.client_id)) {
-			send_login_ok_packet(ev.client_id);
-			send_put_player_packet(ev.client_id, ev.client_id); // 나한테 내 위치 보내기
+	case DB_EVT_SEARCH:
+		if (search_user_id(ev.client_id))
+		{
+			send_login_ok_packet(new_id);
+			send_put_player_packet(new_id, new_id); // 나한테 내 위치 보내기
 
-					// 다른 플레이어의 뷰리스트에 나를 추가하고 전송
+			// 다른 플레이어의 뷰리스트에 나를 추가하고 전송
 			for (int i = 0; i < MAX_USER; ++i) {
 				if (false == clients[i].in_use) continue;
 				if (false == is_eyesight(new_id, i)) continue;
 				if (i == new_id) continue;
 
-				clients[i].myLock.lock();
+				clients[i].view_lock.lock();
 				clients[i].viewlist.insert(new_id);
-				clients[i].myLock.unlock();
+				clients[i].view_lock.unlock();
 
 				send_put_player_packet(i, new_id);
 			}
@@ -855,9 +934,9 @@ void process_db_event(DB_EVENT_ST &ev) {
 				if (i == new_id) continue;
 				if (false == is_eyesight(i, new_id)) continue;
 
-				clients[new_id].myLock.lock();
+				clients[new_id].view_lock.lock();
 				clients[new_id].viewlist.insert(i);
-				clients[new_id].myLock.unlock();
+				clients[new_id].view_lock.unlock();
 
 				send_put_player_packet(new_id, i);
 			}
@@ -867,43 +946,61 @@ void process_db_event(DB_EVENT_ST &ev) {
 			for (int i = 0; i < MAX_NPC; ++i) {
 				if (false == is_player_npc_eyesight(new_id, i)) continue;
 
-				clients[new_id].myLock.lock();
+				clients[new_id].view_lock.lock();
 				clients[new_id].npc_viewlist.insert(i);
-				clients[new_id].myLock.unlock();
+				clients[new_id].view_lock.unlock();
 
 				send_put_npc_packet(new_id, i);
 
 				wakeup_NPC(i);
 			}
+
+		}
+		else 	disconnect_client(new_id);
+
+
+		break;
+	case DB_EVT_SAVE:
+		if (save_user_data(ev.client_id)) {
+			wcout << L"저장 성공!\n";
 		}
 		else {
-			disconnect_client(ev.client_id);
+			wcout << L"저장 실패!!!\n";
 		}
-		break;
+		wcout << L"연결을 종료합니다! \n";
+		clients[new_id].is_login_ok = false;
+		disconnect_client(new_id);
 
-	case DB_EVT_SAVE :
-		save_user_data(ev.client_id);
 		break;
-	default: break;
+	default:
+		break;
 	}
 }
 
 void disconnect_client(int id) {
-	for (int i = 0; i < MAX_USER; ++i) {
-		if (false == clients[i].in_use) continue;
-		if (i == id) continue;
-		if (0 == clients[i].viewlist.count(id)) continue; // 다른 클라이언트의 뷰리스트에 내가 없으면 넘어가기
-		if (!check_user_id(id)) continue;
-		save_user_data(id);
-		clients[i].myLock.lock();
-		clients[i].viewlist.erase(id);
-		clients[i].myLock.unlock();
+	if (clients[id].is_login_ok) add_db_evt(id, DB_EVT_SAVE);
+	else {
+		for (int i = 0; i < MAX_USER; ++i) {
+			if (false == clients[i].in_use) continue;
+			if (i == id) continue;
+			clients[i].view_lock.lock();
+			if (0 == clients[i].viewlist.count(id)) {
+				clients[i].view_lock.unlock();
+				continue; // 다른 클라이언트의 뷰리스트에 내가 없으면 넘어가기
+			}
+			clients[i].viewlist.erase(id);
+			clients[i].view_lock.unlock();
 
-		send_remove_player_packet(i, id);		
+			send_remove_player_packet(i, id);
+		}
+		closesocket(clients[id].socket);
+		clients[id].in_use = false;
+		clients[id].is_login_ok = false;
+
+		clients[id].view_lock.lock();
+		clients[id].viewlist.clear();
+		clients[id].view_lock.unlock();
 	}
-	closesocket(clients[id].socket);
-	clients[id].in_use = false;
-	clients[id].viewlist.clear();
 }
 
 void worker_thread() {
@@ -978,31 +1075,45 @@ void worker_thread() {
 		}
 		else if (EVT_SEND == over_ex->event_t) {
 			if (false == over_ex->event_t)
-			delete over_ex;
-			}
+				delete over_ex;
+		}
 		else if (EVT_MOVE == over_ex->event_t) {
 			EVENT_ST ev;
 			ev.obj_id = key;
 			ev.start_time = high_resolution_clock::now();
 			ev.type = EVT_MOVE;
 
-		//	cout << "EVT_MOVE " << ev.obj_id << '\n';
+			//	cout << "EVT_MOVE " << ev.obj_id << '\n';
 			process_event(ev);
 			delete over_ex;
 		}
-		else if (DB_EVT_SEARCH_ID == over_ex->event_t) {
-			DB_EVENT_ST ev;
-			ev.client_id = key;
-			ev.type = DB_EVT_SEARCH_ID;
+		else if (DB_EVT_SEARCH == over_ex->event_t) {
+			DB_EVENT_ST dev;
+			dev.client_id = key;
+			dev.type = DB_EVT_SEARCH;
 
-			process_db_event(ev);
+			process_db_event(dev);
+			delete over_ex;
 		}
 		else if (DB_EVT_SAVE == over_ex->event_t) {
-			DB_EVENT_ST ev;
-			ev.client_id = key;
-			ev.type = DB_EVT_SAVE;
+			DB_EVENT_ST dev;
+			dev.client_id = key;
+			dev.type = DB_EVT_SAVE;
 
-			process_db_event(ev);
+			process_db_event(dev);
+			delete over_ex;
+		}
+		else if (EVT_PLAYER_MOVE_DETECT == over_ex->event_t) {
+			lua_State *L = npcs[key].L;
+			int player_id = over_ex->target_player;
+
+			// 워커스레드가 돌리기때문에 락이 필요하다
+			npcs[key].lua_lock.lock();
+			lua_getglobal(L, "event_player_move");
+			lua_pushnumber(L, player_id);
+			lua_pcall(L, 1, 0, 0);
+			npcs[key].lua_lock.unlock();
+			delete over_ex;
 		}
 		else {
 			cout << "UNKNOWN EVENT\n";
@@ -1039,6 +1150,28 @@ void do_timer() {
 	}
 }
 
+void do_transaction() {
+	while (true) {
+		this_thread::sleep_for(10ms);
+		while (true) {
+			db_lock.lock();
+			if (true == db_queue.empty()) {
+				db_lock.unlock();
+				break;
+			}
+
+			DB_EVENT_ST ev = db_queue.front();
+
+			db_queue.pop();
+			db_lock.unlock();
+
+			OVER_EX *over_ex = new OVER_EX;
+			over_ex->event_t = ev.type;
+			PostQueuedCompletionStatus(g_iocp, 1, ev.client_id, &over_ex->over);
+		}
+	}
+}
+
 void move_npc(int npc_id) {
 	int x = npcs[npc_id].x;
 	int y = npcs[npc_id].y;
@@ -1051,7 +1184,7 @@ void move_npc(int npc_id) {
 		old_vl.insert(i);
 	}
 
-//	cout << "move npc\n";
+	//	cout << "move npc\n";
 
 	switch (rand() % 4 + 1) {
 	case 1: if (y > 0) y--; break;
@@ -1078,14 +1211,18 @@ void move_npc(int npc_id) {
 		// 만약 이동 전 뷰리스트에 플레이어가 없다면
 		if (0 == old_vl.count(pl)) {
 			// 그 플레이어 뷰리스트에 내가 있는지 확인하고 없으면 넣어주기
+			clients[pl].view_lock.lock();
 			if (0 == clients[pl].npc_viewlist.count(npc_id)) {
-				clients[pl].myLock.lock();
 				clients[pl].npc_viewlist.insert(npc_id);
-				clients[pl].myLock.unlock();
+				clients[pl].view_lock.unlock();
 
 				send_put_npc_packet(pl, npc_id);
 			}
-			else send_npc_pos_packet(pl, npc_id);
+			else {
+				clients[pl].view_lock.unlock();
+
+				send_npc_pos_packet(pl, npc_id);
+			}
 		}
 		else send_npc_pos_packet(pl, npc_id);
 	}
@@ -1094,11 +1231,16 @@ void move_npc(int npc_id) {
 	for (auto &pl : old_vl) {
 		// 새로운 뷰리스트에 없는 플레이어는
 		if (0 == new_vl.count(pl)) {
+			clients[pl].view_lock.lock();
+
 			// 그 플레이어의 뷰리스트에 내가 있는지 확인하고 있으면 지워주기
 			if (0 < clients[pl].npc_viewlist.count(npc_id)) {
+				clients[pl].view_lock.unlock();
+
 				clients[pl].npc_viewlist.erase(npc_id);
 				send_remove_npc_packet(pl, npc_id);
 			}
+			else 	clients[pl].view_lock.unlock();
 		}
 	}
 
@@ -1108,11 +1250,11 @@ void wakeup_NPC(int npc_id) {
 	if (true == is_sleeping(npc_id)) {
 		npcs[npc_id].is_sleeping = false;
 		EVENT_ST ev;
-		
+
 		ev.obj_id = npc_id;
 		ev.type = EVT_MOVE;
 		ev.start_time = high_resolution_clock::now() + 1s;
-	
+
 		add_timer(ev.obj_id, ev.type, ev.start_time);
 	}
 }

@@ -1,10 +1,12 @@
 #pragma once
 
-constexpr int MAX_USER = 10;
+constexpr int MAX_USER = 500;
+constexpr int MAX_NPC = 20000;
+constexpr int MAX_STR_LEN = 50; // 크게하면 패킷크기 넘어가니까 50 이하의 숫자를 넣도록! 유니코드니까 50하면 100바이트 쓰는거임
+
 constexpr int WORLD_WIDTH = 800;
 constexpr int WORLD_HEIGHT = 800;
 
-constexpr int MAX_NPC = 200000;
 
 constexpr int SERVER_PORT = 3500;
 
@@ -49,6 +51,8 @@ constexpr int SC_MOVE_PLAYER	= 4; // 플레이어가 새 좌표로 이동했으니 표시하는 좌
 constexpr int SC_PUT_NPC		= 5;
 constexpr int SC_REMOVE_NPC		= 6;
 constexpr int SC_MOVE_NPC		= 7;
+constexpr int SC_CHAT			= 8;
+constexpr int SC_NPC_CHAT		= 9;
 
 struct sc_packet_login_ok {
 	char size;
@@ -74,6 +78,13 @@ struct sc_packet_move_player {
 	char type;
 	int id;
 	int x, y;
+};
+
+struct sc_packet_chat {
+	char size;
+	char type;
+	int id;
+	wchar_t message[MAX_STR_LEN];
 };
 
 #pragma pack(pop)
