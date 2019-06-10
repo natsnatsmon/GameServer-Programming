@@ -47,6 +47,8 @@ public:
 	unordered_set <int> view_list;
 	lua_State *L;
 	mutex l_lock;
+	mutex v_lock;
+	bool is_login;
 
 	SOCKETINFO() {
 		in_use = false;
@@ -159,6 +161,7 @@ void Initialize_PC()
 {
 	for (int i = 0; i < MAX_USER; ++i) {
 		clients[i].in_use = false;
+		clients[i].is_login = false;
 	}
 }
 
@@ -361,86 +364,153 @@ void send_chat_packet(int client, int from_id, wchar_t *mess)
 
 void process_packet(int client, char *packet)
 {
-	cs_packet_up *p = reinterpret_cast<cs_packet_up *>(packet);
-	int x = clients[client].x;
-	int y = clients[client].y;
+	if (!clients[client].is_login) {
+		cs_packet_init *p = reinterpret_cast<cs_packet_init *>(packet);
 
-	auto old_vl = clients[client].view_list;
-	switch (p->type)
-	{
-	case CS_UP: if (y > 0) y--; break;
-	case CS_DOWN: if (y < (WORLD_HEIGHT - 1)) y++; break;
-	case CS_LEFT: if (x > 0) x--; break;
-	case CS_RIGHT:if (x < (WORLD_WIDTH - 1)) x++; break;
-	default:
-		wcout << L"정의되지 않은 패킷 도착 오류!!\n";
-		while (true);
+		int new_id = client;
+
+		if (CS_HOTSPOT_MOD == p->type) {
+			clients[new_id].x = clients[new_id].y = 4;
+			std::cout << clients[new_id].x << ", " << clients[new_id].y << '\n';
+		}
+		else if (CS_CCU_MOD == p->type) {
+			clients[new_id].x = rand() % WORLD_WIDTH;
+			clients[new_id].y = rand() % WORLD_HEIGHT;
+			std::cout << clients[new_id].x << ", " << clients[new_id].y << '\n';
+		}
+
+		clients[client].is_login = true;
+
+		for (int i = 0; i < MAX_USER; ++i) {
+			if (false == clients[i].in_use) continue;
+			if (false == Is_Near_Object(new_id, i)) continue;
+			if (i == new_id) continue;
+			clients[i].v_lock.lock();
+			clients[i].view_list.insert(new_id);
+			clients[i].v_lock.unlock();
+
+			send_put_player_packet(i, new_id);
+		}
+
+		for (int i = 0; i < MAX_USER + NUM_NPC; ++i) {
+			if (false == clients[i].in_use) continue;
+			if (i == new_id) continue;
+			if (false == Is_Near_Object(i, new_id)) continue;
+			if (true == is_NPC(i)) wakeup_NPC(i);
+			clients[new_id].v_lock.lock();
+			clients[new_id].view_list.insert(i);
+			clients[new_id].v_lock.unlock();
+
+			send_put_player_packet(new_id, i);
+		}
+
 	}
-	clients[client].x = x;
-	clients[client].y = y;
+	else {
+		cs_packet_up *p = reinterpret_cast<cs_packet_up *>(packet);
 
-	unordered_set <int> new_vl;
-	for (int i = 0; i < MAX_USER; ++i) {
-		if (i == client) continue;
-		if (false == clients[i].in_use) continue;
-		if (false == Is_Near_Object(i, client)) continue;
-		new_vl.insert(i);
-	}
+		int x = clients[client].x;
+		int y = clients[client].y;
 
-	for (int i = MAX_USER; i < MAX_USER + NUM_NPC; ++i) {
-		if (false == Is_Near_Object(i, client)) continue;
-		new_vl.insert(i);
-	}
+		clients[client].v_lock.lock();
+		auto old_vl = clients[client].view_list;
+		clients[client].v_lock.unlock();
+		switch (p->type)
+		{
+		case CS_UP: if (y > 0) y--; break;
+		case CS_DOWN: if (y < (WORLD_HEIGHT - 1)) y++; break;
+		case CS_LEFT: if (x > 0) x--; break;
+		case CS_RIGHT:if (x < (WORLD_WIDTH - 1)) x++; break;
+		default:
+			wcout << L"정의되지 않은 패킷 도착 오류!!\n";
+			while (true);
+		}
+		clients[client].x = x;
+		clients[client].y = y;
 
-	send_pos_packet(client, client);
+		unordered_set <int> new_vl;
+		for (int i = 0; i < MAX_USER; ++i) {
+			if (i == client) continue;
+			if (false == clients[i].in_use) continue;
+			if (false == Is_Near_Object(i, client)) continue;
+			new_vl.insert(i);
+		}
 
-	// 1. old_vl에도 있고 new_vl에도 있는 객체
-	for (auto pl : old_vl) {
-		if (0 == new_vl.count(pl)) continue;
-		if (true == is_NPC(pl)) continue;
-		if (0 < clients[pl].view_list.count(client))
-			send_pos_packet(pl, client);
-		else {
-			clients[pl].view_list.insert(client);
-			send_put_player_packet(pl, client);
+		for (int i = MAX_USER; i < MAX_USER + NUM_NPC; ++i) {
+			if (false == Is_Near_Object(i, client)) continue;
+			new_vl.insert(i);
+		}
+
+		send_pos_packet(client, client);
+
+		// 1. old_vl에도 있고 new_vl에도 있는 객체
+		for (auto pl : old_vl) {
+			if (0 == new_vl.count(pl)) continue;
+			if (true == is_NPC(pl)) continue;
+			clients[pl].v_lock.lock();
+			if (0 < clients[pl].view_list.count(client)) {
+				clients[pl].v_lock.unlock();
+				send_pos_packet(pl, client);
+			}
+			else {
+				clients[pl].view_list.insert(client);
+				clients[pl].v_lock.unlock();
+				send_put_player_packet(pl, client);
+			}
+		}
+		// 2. old_vl에 없고 new_vl에만 있는 플레이어
+		for (auto pl : new_vl) {
+			if (0 < old_vl.count(pl)) continue;
+			clients[client].v_lock.lock();
+			clients[client].view_list.insert(pl);
+			clients[client].v_lock.unlock();
+
+			send_put_player_packet(client, pl);
+			if (true == is_NPC(pl)) {
+				wakeup_NPC(pl);
+				continue;
+			}
+			clients[pl].v_lock.lock();
+			if (0 == clients[pl].view_list.count(client)) {
+				clients[pl].view_list.insert(client);
+				clients[pl].v_lock.unlock();
+
+				send_put_player_packet(pl, client);
+			}
+			else {
+				clients[pl].v_lock.unlock();
+				send_pos_packet(pl, client);
+			}
+		}
+		// 3. old_vl에 있고 new_vl에는 없는 플레이어
+		for (auto pl : old_vl) {
+			if (0 < new_vl.count(pl)) continue;
+			clients[client].v_lock.lock();
+			clients[client].view_list.erase(pl);
+			clients[client].v_lock.unlock();
+
+			send_remove_player_packet(client, pl);
+			if (true == is_NPC(pl)) continue;
+
+			clients[pl].v_lock.lock();
+			if (0 < clients[pl].view_list.count(client)) {
+				clients[pl].view_list.erase(client);
+				clients[pl].v_lock.unlock();
+
+				send_remove_player_packet(pl, client);
+			}
+			else 	clients[pl].v_lock.unlock();
+
+		}
+
+		for (auto monster : new_vl)
+		{
+			if (false == is_NPC(monster)) continue;
+			OVER_EX *ex_over = new OVER_EX;
+			ex_over->event_t = EV_PLAYER_MOVE_DETECT;
+			ex_over->target_player = client;
+			PostQueuedCompletionStatus(g_iocp, 1, monster, &ex_over->over);
 		}
 	}
-	// 2. old_vl에 없고 new_vl에만 있는 플레이어
-	for (auto pl : new_vl) {
-		if (0 < old_vl.count(pl)) continue;
-		clients[client].view_list.insert(pl);
-		send_put_player_packet(client, pl);
-		if (true == is_NPC(pl)) {
-			wakeup_NPC(pl);
-			continue;
-		}
-		if (0 == clients[pl].view_list.count(client)) {
-			clients[pl].view_list.insert(client);
-			send_put_player_packet(pl, client);
-		} else
-			send_pos_packet(pl, client);
-	}
-	// 3. old_vl에 있고 new_vl에는 없는 플레이어
-	for (auto pl : old_vl) {
-		if (0 < new_vl.count(pl)) continue;
-		clients[client].view_list.erase(pl);
-		send_remove_player_packet(client, pl);
-		if (true == is_NPC(pl)) continue;
-		if (0 < clients[pl].view_list.count(client)) {
-			clients[pl].view_list.erase(client);
-			send_remove_player_packet(pl, client);
-		}
-	}
-
-	for (auto monster : new_vl)
-	{
-		if (false == is_NPC(monster)) continue;
- 		OVER_EX *ex_over = new OVER_EX;
-		ex_over->event_t = EV_PLAYER_MOVE_DETECT;
-		ex_over->target_player = client;
-		PostQueuedCompletionStatus(g_iocp, 1, monster, &ex_over->over);
-	}
-
 }
 
 void disconnect_client(int id)
@@ -448,13 +518,22 @@ void disconnect_client(int id)
 	for (int i = 0; i < MAX_USER; ++i) {
 		if (false == clients[i].in_use) continue;
 		if (i == id) continue;
-		if (0 == clients[i].view_list.count(id)) continue;
+		clients[i].v_lock.lock();
+		if (0 == clients[i].view_list.count(id)) {
+			clients[i].v_lock.unlock();
+			continue;
+		}
 		clients[i].view_list.erase(id);
+		clients[i].v_lock.unlock();
+
 		send_remove_player_packet(i, id);
 	}
 	closesocket(clients[id].socket);
 	clients[id].in_use = false;
+	clients[id].v_lock.lock();
 	clients[id].view_list.clear();
+	clients[id].v_lock.unlock();
+
 }
 
 void worker_thread()
@@ -616,8 +695,10 @@ int do_accept()
 
 		clients[new_id].socket = clientSocket;
 		clients[new_id].prev_size = 0;
-		clients[new_id].x = clients[new_id].y = 4;
+		clients[new_id].v_lock.lock();
 		clients[new_id].view_list.clear();
+		clients[new_id].v_lock.unlock();
+
 		ZeroMemory(&clients[new_id].over_ex.over,
 			sizeof(clients[new_id].over_ex.over));
 		flags = 0;
@@ -629,23 +710,9 @@ int do_accept()
 
 		send_login_ok_packet(new_id);
 		send_put_player_packet(new_id, new_id);
-		for (int i = 0; i < MAX_USER; ++i) {
-			if (false == clients[i].in_use) continue;
-			if (false == Is_Near_Object(new_id, i)) continue;
-			if (i == new_id) continue;
-			clients[i].view_list.insert(new_id);
-			send_put_player_packet(i, new_id);
-		}
 
-		for (int i = 0; i < MAX_USER + NUM_NPC; ++i) {
-			if (false == clients[i].in_use) continue;
-			if (i == new_id) continue;
-			if (false == Is_Near_Object(i, new_id)) continue;
-			if (true == is_NPC(i)) wakeup_NPC(i);
-			clients[new_id].view_list.insert(i);
-			send_put_player_packet(new_id, i);
-		}
 		do_recv(new_id);
+
 	}
 
 	// 6-2. 리슨 소켓종료
@@ -683,19 +750,29 @@ void random_move_NPC(int id)
 	}
 	// 새로 만난 플레이어, 계속 보는 플레이어 처리
 	for (auto pl : new_vl) {
+		clients[pl].v_lock.lock();
 		if (0 == clients[pl].view_list.count(pl)) {
 			clients[pl].view_list.insert(id);
+			clients[pl].v_lock.unlock();
+
 			send_put_player_packet(pl, id);
 		}
-		else send_pos_packet(pl, id);
+		else {
+			clients[pl].v_lock.unlock();
+			send_pos_packet(pl, id);
+		}
 	}
 	// 헤어진 플레이어 처리
 	for (auto pl : old_vl) {
 		if (0 == new_vl.count(pl)) {
+			clients[pl].v_lock.lock();
 			if (0 < clients[pl].view_list.count(pl)) {
 				clients[pl].view_list.erase(id);
+				clients[pl].v_lock.unlock();
+
 				send_remove_player_packet(pl, id);
-			}
+			} else 	clients[pl].v_lock.unlock();
+
 		}
 	}
 }

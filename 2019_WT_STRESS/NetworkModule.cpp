@@ -19,14 +19,15 @@ using namespace chrono;
 
 extern HWND		hWnd;
 
-const static int MAX_TEST = 500;
+const static int MAX_TEST = 281;
 const static int INVALID_ID = -1;
 const static int MAX_PACKET_SIZE = 255;
 const static int MAX_BUFF_SIZE = 255;
 
 #pragma comment (lib, "ws2_32.lib")
 
-#include "..\2019_WT_SERVER\protocol.h"
+#include "..\±³¼ö´Ô\2019__WT_NPC\2019_WT_SERVER\2019_WT_SERVER\protocol.h"
+//#include "..\2019_WT_SERVER\protocol.h"
 
 HANDLE g_hiocp;
 
@@ -70,6 +71,9 @@ struct ALIEN {
 	int x, y;
 	int visible_count;
 };
+
+void SendPacket(int cl, void *packet);
+void Adjust_Number_Of_Client();
 
 void error_display(const char *msg, int err_no)
 {
@@ -217,6 +221,7 @@ void Adjust_Number_Of_Client()
 		reinterpret_cast<CHAR *>(g_clients[num_connections].recv_over.IOCP_buf);
 	g_clients[num_connections].recv_over.wsabuf.len = sizeof(g_clients[num_connections].recv_over.IOCP_buf);
 
+
 	DWORD recv_flag = 0;
 	CreateIoCompletionPort(reinterpret_cast<HANDLE>(g_clients[num_connections].client_socket), g_hiocp, num_connections, 0);
 	int ret = WSARecv(g_clients[num_connections].client_socket, &g_clients[num_connections].recv_over.wsabuf, 1,
@@ -261,6 +266,7 @@ void Test_Thread()
 		for (int i = 0; i < num_connections; ++i) {
 			if (false == g_clients[i].connect) continue;
 			if (g_clients[i].last_move_time + 1s > high_resolution_clock::now()) continue;
+
 			g_clients[i].last_move_time = high_resolution_clock::now();
 			cs_packet_up my_packet;
 			my_packet.size = sizeof(my_packet);
