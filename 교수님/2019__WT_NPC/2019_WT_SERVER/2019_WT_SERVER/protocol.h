@@ -27,8 +27,6 @@ constexpr int SC_CHAT = 5;
 struct cs_packet_init {
 	char size;
 	char type;
-	int id;
-	short x, y;
 };
 
 struct cs_packet_up {

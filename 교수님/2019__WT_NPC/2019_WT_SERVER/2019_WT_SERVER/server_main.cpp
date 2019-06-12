@@ -79,63 +79,6 @@ mutex timer_l;
 priority_queue <EVENT_ST> timer_queue;
 
 HANDLE g_iocp;
-//SOCKETINFO clients[MAX_USER];
-//
-//
-//
-//// NPC 구현 첫번째
-//class NPCINFO
-//{
-//public:
-//	char x, y;
-//	unordered_set <int> view_list;
-//};
-//SOCKETINFO clients[MAX_USER];
-//NPCINFO npcs[NUM_NPC];
-//
-//// 장점 : 메모리의 낭비가 없다. 직관적이다.
-//// 단점 : 함수의 중복 구현이 필요하다.
-//bool Is_Near_Object(int a, int b);
-//
-//bool Is_Near_Player_Player(int a, int b);
-//bool Is_Near_Player_Npc(int a, int b);
-//bool Is_Near_Npc_Npc(int a, int b);
-//
-//// NPC 구현 두번째
-//class NPCINFO
-//{
-//public:
-//	char x, y;
-//	unordered_set <int> view_list;
-//};
-//
-//class SOCKETINFO : public NPCINFO
-//{
-//public:
-//	bool in_use;
-//	OVER_EX over_ex;
-//	SOCKET socket;
-//	char packet_buffer[MAX_BUFFER];
-//	int	prev_size;
-//	unordered_set <int> view_list;
-//
-//	SOCKETINFO() {
-//		in_use = false;
-//		over_ex.dataBuffer.len = MAX_BUFFER;
-//		over_ex.dataBuffer.buf = over_ex.messageBuffer;
-//		over_ex.is_recv = true;
-//	}
-//};
-//
-//NPCINFO *objects[MAX_USER + NUM_NPC];
-
-// 장점 : 메모리의 낭비가 없다. 함수의 중복 구현이 필요 없다.
-// 단점 : 포인터의 사용. 비직관적
-// 특징 : ID 배분을 하거나, object_type 멤버가 필요.
-
-// NPC 구현 실습 단순무식
-// ID : 0 ~ 9  => 플레이어
-// ID : 10 ~ 10 + NUM_NPC - 1  => NPC
 SOCKETINFO clients[MAX_USER + NUM_NPC];
 
 
@@ -155,6 +98,18 @@ void error_display(const char *mess, int err_no)
 	wcout << L"에러 [" << err_no << L"]  " << lpMsgBuf << endl;
 	while(true);
 	LocalFree(lpMsgBuf);
+}
+
+bool is_NPC(int id)
+{
+	if ((id >= MAX_USER) && (id < MAX_USER + NUM_NPC))
+		return true;
+	else return false;
+}
+
+bool is_sleeping(int id)
+{
+	return clients[id].is_sleeping;
 }
 
 void Initialize_PC()
@@ -200,6 +155,59 @@ int API_send_message(lua_State *L)
 	return 0;
 }
 
+int API_move_NPC(lua_State *L) {
+	int obj_id = (int)lua_tonumber(L, -3);
+	char *state = (char *)lua_tostring(L, -2);
+	int escape = (int)lua_tonumber(L, -1);
+	lua_pop(L, 4);
+
+	cout << state << ", " << escape << endl;
+
+	if (strcmp(state, "s")) {
+		lua_getglobal(L, "set_state");
+		lua_pushstring(L, "escape");
+		lua_pcall(L, 1, 0, 0);
+	}
+
+	EVENT_ST ev;
+	ev.obj_id = obj_id;
+	ev.type = EV_MOVE;
+	ev.start_time = high_resolution_clock::now() + 1s;
+	timer_l.lock();
+	timer_queue.push(ev);
+	timer_l.unlock();
+	process_event(ev);
+
+	if (escape > 0) {
+		lua_getglobal(L, "set_escape_state");
+		lua_pushnumber(L, escape - 1);
+		lua_pcall(L, 1, 0, 0);
+	}
+
+	return 0;
+}
+
+int API_sleep_NPC(lua_State *L) {
+	cout << "sleep NPC~~ \n";
+	int obj_id = (int)lua_tonumber(L, -1);
+	lua_pop(L, 2);
+
+	if (false == is_sleeping(obj_id)) {
+		clients[obj_id].is_sleeping = true;
+
+	}
+
+	lua_getglobal(L, "set_state");
+	lua_pushstring(L, "sleep");
+	lua_pcall(L, 1, 0, 0);
+
+	lua_getglobal(L, "set_escape_state");
+	lua_pushnumber(L, 3);
+	lua_pcall(L, 1, 0, 0);
+
+	return 1;
+}
+
 void add_timer(int obj_id, EVENT_TYPE et,
 	high_resolution_clock::time_point start_time)
 {
@@ -217,13 +225,25 @@ void Initialize_NPC()
 		clients[npc_id].x = rand() % WORLD_WIDTH;
 		clients[npc_id].y = rand() % WORLD_HEIGHT;
 		add_timer(npc_id, EV_MOVE, high_resolution_clock::now() + 1s);
+
 		lua_State *L = clients[npc_id].L;
 		lua_getglobal(L, "set_uid");
 		lua_pushnumber(L, npc_id);
 		lua_pcall(L, 1, 0, 0);
+
+		lua_getglobal(L, "set_state");
+		lua_pushstring(L, "sleep");
+		lua_pcall(L, 1, 0, 0);
+
+		lua_getglobal(L, "set_escape_state");
+		lua_pushnumber(L, 3);
+		lua_pcall(L, 1, 0, 0);
+
 		lua_register(L, "API_get_x", API_get_x);
 		lua_register(L, "API_get_y", API_get_y);
 		lua_register(L, "API_SendMessage", API_send_message);
+		lua_register(L, "API_Move_NPC", API_move_NPC);
+		lua_register(L, "API_Sleep_NPC", API_sleep_NPC);
 	}
 	wcout << L"몬스터 가상머신 초기화 완료";
 }
@@ -235,18 +255,6 @@ bool Is_Near_Object(int a, int b)
 	if (VIEW_RADIUS < abs(clients[a].y - clients[b].y))
 		return false;
 	return true;
-}
-
-bool is_NPC(int id)
-{
-	if ((id >= MAX_USER) && (id < MAX_USER + NUM_NPC)) 
-		return true;
-	else return false;
-}
-
-bool is_sleeping(int id)
-{
-	return clients[id].is_sleeping;
 }
 
 void wakeup_NPC(int id)
@@ -370,13 +378,15 @@ void process_packet(int client, char *packet)
 		int new_id = client;
 
 		if (CS_HOTSPOT_MOD == p->type) {
-			clients[new_id].x = clients[new_id].y = 4;
-			std::cout << clients[new_id].x << ", " << clients[new_id].y << '\n';
+			clients[new_id].x = clients[new_id].y = 400;
 		}
 		else if (CS_CCU_MOD == p->type) {
 			clients[new_id].x = rand() % WORLD_WIDTH;
 			clients[new_id].y = rand() % WORLD_HEIGHT;
-			std::cout << clients[new_id].x << ", " << clients[new_id].y << '\n';
+		}
+		else {
+			clients[new_id].x = rand() % 400;
+			clients[new_id].y = rand() % 400;
 		}
 
 		clients[client].is_login = true;
@@ -593,11 +603,21 @@ void worker_thread()
 			delete over_ex;
 		}
 		else if (EV_MOVE == over_ex->event_t) {
-			EVENT_ST ev;
-			ev.obj_id = key;
-			ev.start_time = high_resolution_clock::now();
-			ev.type = EV_MOVE;
-			process_event(ev);
+			lua_State *L = clients[key].L;
+			int player_id = over_ex->target_player;
+
+			clients[key].l_lock.lock();
+			lua_getglobal(L, "event_npc_move");
+			lua_pushnumber(L, player_id);
+			lua_pcall(L, 1, 0, 0);
+			clients[key].l_lock.unlock();
+
+			//EVENT_ST ev;
+			//ev.obj_id = key;
+			//ev.start_time = high_resolution_clock::now();
+			//ev.type = EV_MOVE;
+			//process_event(ev);
+
 			delete over_ex;
 		}
 		else if (EV_PLAYER_MOVE_DETECT == over_ex->event_t) {
@@ -610,8 +630,10 @@ void worker_thread()
 			lua_pcall(L, 1, 0, 0);
 			clients[key].l_lock.unlock();
 
+
 			delete over_ex;
-		} else 
+		}
+		else
 		{
 			cout << "UNKNOWN EVENT\n";
 			while (true);
@@ -775,6 +797,17 @@ void random_move_NPC(int id)
 
 		}
 	}
+
+	for (auto pl : new_vl)
+	{
+		if (true == is_NPC(pl)) continue;
+
+		OVER_EX *ex_over = new OVER_EX;
+		ex_over->event_t = EV_MOVE;
+		ex_over->target_player = pl;
+		PostQueuedCompletionStatus(g_iocp, 1, id, &ex_over->over);
+	}
+
 }
 
 void do_AI()
@@ -810,14 +843,18 @@ void process_event(EVENT_ST &ev)
 			player_is_near = true;
 			break;
 		}
-		if (player_is_near) {
-			random_move_NPC(ev.obj_id);
-			add_timer(ev.obj_id, EV_MOVE, 
-				high_resolution_clock::now() + 1s);
-		}
-		else {
-			clients[ev.obj_id].is_sleeping = true;
-		}
+		random_move_NPC(ev.obj_id);
+		//add_timer(ev.obj_id, EV_MOVE,
+		//	high_resolution_clock::now() + 1s);
+
+		//if (player_is_near) {
+		//	random_move_NPC(ev.obj_id);
+		//	add_timer(ev.obj_id, EV_MOVE, 
+		//		high_resolution_clock::now() + 1s);
+		//}
+		//else {
+		//	clients[ev.obj_id].is_sleeping = true;
+		//}
 		break;
 	}
 	default:

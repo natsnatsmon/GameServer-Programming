@@ -19,10 +19,12 @@ using namespace chrono;
 
 extern HWND		hWnd;
 
-const static int MAX_TEST = 281;
+const static int MAX_TEST = 200;
 const static int INVALID_ID = -1;
 const static int MAX_PACKET_SIZE = 255;
 const static int MAX_BUFF_SIZE = 255;
+
+extern int mod;
 
 #pragma comment (lib, "ws2_32.lib")
 
@@ -49,6 +51,7 @@ struct CLIENT {
 	int y;
 	high_resolution_clock::time_point last_move_time;
 	bool connect;
+	bool is_init_ok;
 
 	SOCKET client_socket;
 	OverlappedEx recv_over;
@@ -265,6 +268,18 @@ void Test_Thread()
 
 		for (int i = 0; i < num_connections; ++i) {
 			if (false == g_clients[i].connect) continue;
+
+			if (false == g_clients[i].is_init_ok) {
+				cs_packet_init my_packet;
+				my_packet.size = sizeof(my_packet);
+
+				if(CS_CCU_MOD == mod) my_packet.type = CS_CCU_MOD;
+				else if (CS_HOTSPOT_MOD == mod) my_packet.type = CS_HOTSPOT_MOD;
+
+				SendPacket(i, &my_packet);
+				g_clients[i].is_init_ok = true;
+				continue;
+			}
 			if (g_clients[i].last_move_time + 1s > high_resolution_clock::now()) continue;
 
 			g_clients[i].last_move_time = high_resolution_clock::now();
@@ -286,6 +301,7 @@ void InitializeNetwork()
 	for (int i = 0; i < MAX_USER; ++i) {
 		g_clients[i].connect = false;
 		g_clients[i].id = INVALID_ID;
+		g_clients[i].is_init_ok = false;
 	}
 	num_connections = 0;
 	last_connect_time = high_resolution_clock::now();

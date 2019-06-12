@@ -33,6 +33,8 @@ bool	keys[256];			// Array Used For The Keyboard Routine
 bool	active = TRUE;		// Window Active Flag Set To TRUE By Default
 bool	fullscreen = TRUE;	// Fullscreen Flag Set To Fullscreen Mode By Default
 
+int		mod = 0;
+
 LRESULT	CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);	// Declaration For WndProc
 
 GLvoid BuildFont(GLvoid)								// Build Our Bitmap Font
@@ -124,16 +126,44 @@ int InitGL(GLvoid)										// All Setup For OpenGL Goes Here
 
 int cuser = 0;
 
-int DrawGLScene(GLvoid)									// Here's Where We Do All The Drawing
+int DrawMenuScene(GLvoid)									// Here's Where We Do All The Drawing
 {
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);	// Clear Screen And Depth Buffer
 	glLoadIdentity();									// Reset The Current Modelview Matrix
 	glTranslatef(0.15f, -0.4f, -1.0f);						// Move One Unit Into The Screen
 															// Pulsing Colors Based On Text Position
 	glColor3f(1, 1, 1);
+	glRasterPos2f(-0.22f, 0.6f);
+	glPrint("< MENU >");
+
 	// Position The Text On The Screen
-	glRasterPos2f(0.0f, 0.00f);
-	glPrint("STRESS TEST [%d]", cuser);	// Print GL Text To The Screen
+	glRasterPos2f(-0.3f, 0.4f);
+	glPrint("HOTSPOT TEST = F1");
+
+	glRasterPos2f(-0.3f, 0.3f);
+	glPrint("STRESS TEST = F5");	// Print GL Text To The Screen
+
+
+	return TRUE;										// Everything Went OK
+}
+
+int DrawGLScene(GLvoid)									// Here's Where We Do All The Drawing
+{
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);	// Clear Screen And Depth Buffer
+	glLoadIdentity();									// Reset The Current Modelview Matrix
+	glTranslatef(0.45f, -0.4f, -1.0f);						// Move One Unit Into The Screen
+															// Pulsing Colors Based On Text Position
+	glColor3f(1, 1, 1);
+	// Position The Text On The Screen
+	glRasterPos2f(-0.5f, 0.00f);
+	
+	// HOTSPOT
+	if (mod == 5) {
+		glPrint("HOTSPOT TEST MOD [%d]", cuser);	// Print GL Text To The Screen
+	}
+	else if (mod == 6) {
+		glPrint("CCU TEST MOD [%d]", cuser);
+	}
 
 	int size = 0;
 	float *points = nullptr;
@@ -146,8 +176,8 @@ int DrawGLScene(GLvoid)									// Here's Where We Do All The Drawing
 	{
 		float x, y, z;
 
-		x = points[i * 2] / 40.0 - 1.25;
-		y = 1.25 - points[i * 2 + 1] / 40.0;
+		x = points[i * 2] / 500.0 - 1.25;
+		y = 1.25 - points[i * 2 + 1] / 500.0;
 		z = -1.0f;
 		glVertex3f(x, y, z);
 	}
@@ -442,11 +472,56 @@ int WINAPI WinMain(HINSTANCE	hInstance,			// Instance
 
 	fullscreen = FALSE;							// Windowed Mode
 
+
 	// Create Our OpenGL Window
-	if (!CreateGLWindow(L"NeHe's Bitmap Font Tutorial", 640, 480, 16, fullscreen))
+	if (!CreateGLWindow(L"NeHe's Bitmap Font Tutorial", 640, 640, 16, fullscreen))
 	{
 		return 0;									// Quit If Window Was Not Created
 	}
+
+	while (!done)									// Loop That Runs While done=FALSE
+	{
+		if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))	// Is There A Message Waiting?
+		{
+			if (msg.message == WM_QUIT)				// Have We Received A Quit Message?
+			{
+				done = TRUE;							// If So done=TRUE
+			}
+			else									// If Not, Deal With Window Messages
+			{
+				TranslateMessage(&msg);				// Translate The Message
+				DispatchMessage(&msg);				// Dispatch The Message
+			}
+		}
+		else										// If There Are No Messages
+		{
+			// Draw The Scene.  Watch For ESC Key And Quit Messages From DrawGLScene()
+			if ((active && !DrawMenuScene()) || keys[VK_ESCAPE])	// Active?  Was There A Quit Received?
+			{
+				done = TRUE;							// ESC or DrawGLScene Signalled A Quit
+			}
+			else									// Not Time To Quit, Update Screen
+			{
+				SwapBuffers(hDC);					// Swap Buffers (Double Buffering)
+			}
+
+			if (keys[VK_F1]) {
+				keys[VK_F1] = FALSE;
+				mod = 5; // CS_HOTSPOT_MOD
+
+				done = TRUE;							// ESC or DrawGLScene Signalled A Quit
+			}
+
+			if (keys[VK_F5]) {
+				keys[VK_F5] = FALSE;
+				mod = 6; // CS_CCU_MOD
+
+				done = TRUE;							// ESC or DrawGLScene Signalled A Quit
+			}
+		}
+	}
+
+	done = FALSE;
 
 	InitializeNetwork();
 
