@@ -64,6 +64,11 @@ typedef unsigned char  BYTE;
 // the blitter object structure BOB
 typedef struct BOB_TYP
         {
+		char kind;			// 내가 추가해도 되는건가?
+		unsigned short hp;
+		unsigned short level;
+		int exp;
+
         int state;          // the state of the object (general)
         int anim_state;     // an animation state variable, up to you
         int attr;           // attributes pertaining to the object (general)

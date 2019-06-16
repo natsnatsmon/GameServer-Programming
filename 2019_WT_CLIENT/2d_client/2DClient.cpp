@@ -16,7 +16,7 @@
 #include <d3d9.h>     // directX includes
 #include "d3dx9tex.h"     // directX includes
 #include "gpdumb1.h"
-#include "..\..\2019_WT_SERVER\protocol.h"
+#include "..\..\Tripple_Accent_SERVER\2019_텀프_protocol.h"
 
 #pragma comment (lib, "ws2_32.lib")
 
@@ -50,7 +50,7 @@ char buffer[80];                // used to print text
 
 								// demo globals
 BOB			player;				// 플레이어 Unit
-BOB			npc[MAX_NPC];      // NPC Unit
+BOB			npc[NUM_NPC];      // NPC Unit
 BOB         skelaton[MAX_USER];     // the other player skelaton
 
 BITMAP_IMAGE reactor;      // the background   
@@ -70,11 +70,15 @@ char	recv_buffer[BUF_SIZE];
 char	packet_buffer[BUF_SIZE];
 DWORD		in_packet_size = 0;
 int		saved_packet_size = 0;
-int		g_myid;
-bool	is_login_ok = false;
 
 int		g_left_x = 0;
 int     g_top_y = 0;
+
+// my info
+int		g_myid, g_myexp, g_mygold;
+char	g_mytype, g_mykind;
+unsigned short g_mylevel, g_myhp, g_myattack;
+bool	is_login_ok = false;
 
 
 // FUNCTIONS //////////////////////////////////////////////
@@ -88,97 +92,95 @@ void ProcessPacket(char *ptr)
 		sc_packet_login_ok *packet = 
 			reinterpret_cast<sc_packet_login_ok *>(ptr);
 		g_myid = packet->id;
+		g_mykind = packet->kind;
+		player.x = packet->x;
+		player.y = packet->y;
+		g_myhp = packet->HP;
+		g_mylevel = packet->LEVEL;
+		g_myattack = packet->ATTACK;
+		g_myexp = packet->EXP;
+		g_mygold = packet->GOLD;
 		is_login_ok = true;
 	}
-
-	case SC_PUT_PLAYER:
+	case SC_LOGIN_FAIL:
 	{
-		sc_packet_put_player *my_packet = reinterpret_cast<sc_packet_put_player *>(ptr);
+		sc_packet_login_fail *packet =
+			reinterpret_cast<sc_packet_login_fail *>(ptr);
+		is_login_ok = false;
+	}
+	case SC_POSITION:
+	{
+		sc_packet_position *my_packet = reinterpret_cast<sc_packet_position *>(ptr);
+		int id = my_packet->id;
+		if (my_packet->obj_class == PLAYER) {
+			if (id == g_myid) {
+				g_left_x = my_packet->x - 10;
+				g_top_y = my_packet->y - 10;
+				player.x = my_packet->x;
+				player.y = my_packet->y;
+			}
+			else if (id < MAX_USER) {
+				skelaton[id].x = my_packet->x;
+				skelaton[id].y = my_packet->y;
+			}
+		}
+
+		else if (my_packet->obj_class == NPC) {
+			npc[id].x = my_packet->x;
+			npc[id].y = my_packet->y;
+		}
+
+		break;
+	}
+	case SC_ADD_OBJECT:
+	{
+		sc_packet_add_object *my_packet = reinterpret_cast<sc_packet_add_object *>(ptr);
 		int id = my_packet->id;
 
-		if (id == g_myid) {
-			player.x = my_packet->x;
-			player.y = my_packet->y;
-			player.attr |= BOB_ATTR_VISIBLE;
+		if (my_packet->obj_class == PLAYER) {
+			if (id == g_myid) {
+				g_mykind = my_packet->kind;
+				player.x = my_packet->x;
+				player.y = my_packet->y;
+				g_myhp = my_packet->HP;
+				g_mylevel = my_packet->LEVEL;
+				g_myexp = my_packet->EXP;
+				player.attr |= BOB_ATTR_VISIBLE;
+			}
+			else if (id < MAX_USER) {
+				skelaton[id].x = my_packet->x;
+				skelaton[id].y = my_packet->y;
+				skelaton[id].attr |= BOB_ATTR_VISIBLE;
+			}
 		}
-		else if (id < MAX_USER) {
-			skelaton[id].x = my_packet->x;
-			skelaton[id].y = my_packet->y;
-			skelaton[id].attr |= BOB_ATTR_VISIBLE;
-		}
-		else {
-			//npc[id - NPC_START].x = my_packet->x;
-			//npc[id - NPC_START].y = my_packet->y;
-			//npc[id - NPC_START].attr |= BOB_ATTR_VISIBLE;
+		else if(my_packet->obj_class == NPC) {
+			npc[id].kind = my_packet->kind;
+			npc[id].x = my_packet->x;
+			npc[id].y = my_packet->y;
+			npc[id].hp = my_packet->HP;
+			npc[id].level = my_packet->LEVEL;
+			npc[id].exp = my_packet->EXP;
+			npc[id].attr |= BOB_ATTR_VISIBLE;
 		}
 		break;
 	}
-	case SC_PUT_NPC:
-	{		
-		sc_packet_put_player *my_packet = reinterpret_cast<sc_packet_put_player *>(ptr);
-		int id = my_packet->id;
-
-		npc[id].x = my_packet->x;
-		npc[id].y = my_packet->y;
-		npc[id].attr |= BOB_ATTR_VISIBLE;
-
-		break;
-	}
-	case SC_MOVE_PLAYER:
+	case SC_REMOVE_OBJECT:
 	{
-		sc_packet_move_player *my_packet = reinterpret_cast<sc_packet_move_player *>(ptr);
-		int other_id = my_packet->id;
-		if (other_id == g_myid) {
-			g_left_x = my_packet->x - 10;
-			g_top_y = my_packet->y - 10;
-			player.x = my_packet->x;
-			player.y = my_packet->y;
-		}
-		else if (other_id < MAX_USER) {
-			skelaton[other_id].x = my_packet->x;
-			skelaton[other_id].y = my_packet->y;
-		}
-		else {
-			//npc[other_id - NPC_START].x = my_packet->x;
-			//npc[other_id - NPC_START].y = my_packet->y;
-		}
-		break;
-	}
-	case SC_MOVE_NPC: 
-	{
-		sc_packet_move_player *my_packet = reinterpret_cast<sc_packet_move_player *>(ptr);
+		sc_packet_remove_object *my_packet = reinterpret_cast<sc_packet_remove_object *>(ptr);
 		int other_id = my_packet->id;
 
-		npc[other_id].x = my_packet->x;
-		npc[other_id].y = my_packet->y;
-
-
-		break;
-	}
-	case SC_REMOVE_PLAYER:
-	{
-		sc_packet_remove_player *my_packet = reinterpret_cast<sc_packet_remove_player *>(ptr);
-		int other_id = my_packet->id;
-		if (other_id == g_myid) {
-			player.attr &= ~BOB_ATTR_VISIBLE;
+		if (my_packet->obj_class == PLAYER) {
+			if (other_id == g_myid) {
+				player.attr &= ~BOB_ATTR_VISIBLE;
+			}
+			else if (other_id < MAX_USER) {
+				skelaton[other_id].attr &= ~BOB_ATTR_VISIBLE;
+			}
 		}
-		else if (other_id < MAX_USER) {
-			skelaton[other_id].attr &= ~BOB_ATTR_VISIBLE;
-		}
-		else {
-	//		npc[other_id - NPC_START].attr &= ~BOB_ATTR_VISIBLE;
+		else if(my_packet->obj_class == NPC) {
+			npc[other_id].attr &= ~BOB_ATTR_VISIBLE;
 		}
 		break;
-	}
-	case SC_REMOVE_NPC :
-	{
-		sc_packet_remove_player *my_packet = reinterpret_cast<sc_packet_remove_player *>(ptr);
-		int other_id = my_packet->id;
-
-		npc[other_id].attr &= ~BOB_ATTR_VISIBLE;
-
-		break;
-
 	}
 	case SC_CHAT:
 	{
@@ -251,7 +253,7 @@ void clienterror()
 BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 	static wchar_t buf[21];
 	int buf_len = 0;
-	cs_packet_id *my_packet = reinterpret_cast<cs_packet_id *>(send_buffer);
+	cs_packet_login *my_packet = reinterpret_cast<cs_packet_login *>(send_buffer);
 	int ret = 0;
 
 	switch (uMsg) {
@@ -273,11 +275,11 @@ BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 
 			// 접속 요청 보내야댐
 			DWORD iobyte;
-			my_packet->size = sizeof(cs_packet_id);
-			send_wsabuf.len = sizeof(cs_packet_id);
-			my_packet->type = CS_ID;
-			ZeroMemory(my_packet->id, 20);
-			strcpy(my_packet->id, cl_id);
+			my_packet->size = sizeof(cs_packet_login);
+			send_wsabuf.len = sizeof(cs_packet_login);
+			my_packet->type = CS_LOGIN;
+			ZeroMemory(my_packet->player_id, 10);
+			strcpy(my_packet->player_id, cl_id);
 
 			ret = WSASend(g_mysocket, &send_wsabuf, 1, &iobyte, 0, NULL, NULL);
 			if (ret) {
@@ -314,19 +316,32 @@ LRESULT CALLBACK WindowProc(HWND hwnd,
 						   // what is the message 
 	switch (msg)
 	{
+	case WM_CHAR :
+	{
+		if (wparam == 'A') {
+			cs_packet_attack *my_packet = reinterpret_cast<cs_packet_attack *>(send_buffer);
+			my_packet->size = sizeof(my_packet);
+			my_packet->type = CS_ATTACK;
+			send_wsabuf.len = sizeof(my_packet);
+			DWORD iobyte;
+			WSASend(g_mysocket, &send_wsabuf, 1, &iobyte, 0, NULL, NULL);
+		}
+	}
+		break;
 	case WM_KEYDOWN: {
 		int x = 0, y = 0;
 		if (wparam == VK_RIGHT)	x += 1;
 		if (wparam == VK_LEFT)	x -= 1;
 		if (wparam == VK_UP)	y -= 1;
 		if (wparam == VK_DOWN)	y += 1;
-		cs_packet_up *my_packet = reinterpret_cast<cs_packet_up *>(send_buffer);
+		cs_packet_move *my_packet = reinterpret_cast<cs_packet_move *>(send_buffer);
 		my_packet->size = sizeof(my_packet);
+		my_packet->type = CS_MOVE;
 		send_wsabuf.len = sizeof(my_packet);
 		DWORD iobyte;
 		if (0 != x) {
-			if (1 == x) my_packet->type = CS_RIGHT;
-			else my_packet->type = CS_LEFT;
+			if (1 == x) my_packet->direction = 3;
+			else my_packet->direction = 2;
 			int ret = WSASend(g_mysocket, &send_wsabuf, 1, &iobyte, 0, NULL, NULL);
 			if (ret) {
 				int error_code = WSAGetLastError();
@@ -334,8 +349,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd,
 			}
 		}
 		if (0 != y) {
-			if (1 == y) my_packet->type = CS_DOWN;
-			else my_packet->type = CS_UP;
+			if (1 == y) my_packet->direction = 1;
+			else my_packet->direction = 0;
 			WSASend(g_mysocket, &send_wsabuf, 1, &iobyte, 0, NULL, NULL);
 		}
 
@@ -536,7 +551,7 @@ int Game_Init(void *parms)
 	}
 
 	// create skelaton bob
-	for (int i = 0; i < MAX_NPC; ++i) {
+	for (int i = 0; i < NUM_NPC; ++i) {
 		if (!Create_BOB32(&npc[i], 0, 0, 32, 32, 1, BOB_ATTR_SINGLE_FRAME))
 			return(0);
 		Load_Frame_BOB32(&npc[i], UNIT_TEXTURE, 0, 4, 0, BITMAP_EXTRACT_MODE_CELL);
@@ -600,7 +615,7 @@ int Game_Shutdown(void *parms)
 
 	// kill skelaton
 	for (int i = 0; i < MAX_USER; ++i) Destroy_BOB32(&skelaton[i]);
-	for (int i = 0; i < MAX_NPC; ++i)
+	for (int i = 0; i < NUM_NPC; ++i)
 		Destroy_BOB32(&npc[i]);
 
 	// shutdonw directdraw
@@ -655,7 +670,7 @@ int Game_Main(void *parms)
 	// draw the skelaton
 	Draw_BOB32(&player);
 	for (int i = 0; i<MAX_USER; ++i) Draw_BOB32(&skelaton[i]);
-	for (int i = 0; i < MAX_NPC; ++i) Draw_BOB32(&npc[i]);
+	for (int i = 0; i < NUM_NPC; ++i) Draw_BOB32(&npc[i]);
 
 	// draw some text
 	wchar_t text[300];

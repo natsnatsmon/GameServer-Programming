@@ -19,7 +19,7 @@ using namespace chrono;
 
 extern HWND		hWnd;
 
-const static int MAX_TEST = 200;
+const static int MAX_TEST = 284;
 const static int INVALID_ID = -1;
 const static int MAX_PACKET_SIZE = 255;
 const static int MAX_BUFF_SIZE = 255;
@@ -263,14 +263,14 @@ void SendPacket(int cl, void *packet)
 void Test_Thread()
 {
 	while (true) {
-		Sleep(100);
+		Sleep(10);
 		Adjust_Number_Of_Client();
 
 		for (int i = 0; i < num_connections; ++i) {
 			if (false == g_clients[i].connect) continue;
 
 			if (false == g_clients[i].is_init_ok) {
-				cs_packet_init my_packet;
+				cs_packet_up my_packet;
 				my_packet.size = sizeof(my_packet);
 
 				if(CS_CCU_MOD == mod) my_packet.type = CS_CCU_MOD;
