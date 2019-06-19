@@ -148,8 +148,8 @@ if (!(bob->attr & BOB_ATTR_VISIBLE))
    return(1);
 
 
-	D3DXVECTOR3 pos = D3DXVECTOR3((bob->x - g_left_x) * 32.0f + 8, 
-		(bob->y - g_top_y) * 32.0f + 8, 0.0);
+	D3DXVECTOR3 pos = D3DXVECTOR3((bob->x - g_left_x) * 32.0f + 33, 
+		(bob->y - g_top_y) * 32.0f + 60, 0.0);
 
 	RECT my = {bob->tx[bob->curr_frame], bob->ty[bob->curr_frame], 
 		bob->tx[bob->curr_frame] + bob->width, bob->ty[bob->curr_frame] + bob->height };
@@ -158,7 +158,7 @@ if (!(bob->attr & BOB_ATTR_VISIBLE))
 			D3DCOLOR_ARGB(255,255,255,255));
 
 	if (bob->message_time > GetTickCount() - 2000) 
-		Draw_Text_D3D(bob->message,static_cast<int>(pos.x),static_cast<int>(pos.y),D3DCOLOR_ARGB(255,200,200,255));
+		Draw_Text_D3D(bob->message, 50, 840-90,D3DCOLOR_ARGB(255,200,200,255));
 
 
 // return success
@@ -194,8 +194,8 @@ int Load_Frame_BOB32(BOB_PTR bob, // bob to load with data
 if (!bob)   return(0);
 if (mode==BITMAP_EXTRACT_MODE_CELL)
    {
-   bob->tx[frame] = cx*(bob->width+1) + 1;
-   bob->ty[frame] = cy*(bob->height+1) + 1;
+   bob->tx[frame] = cx*(bob->width) + 1;
+   bob->ty[frame] = cy*(bob->height) + 1;
    } // end if
 
 bob->images[frame] = g_textures[texture_id];

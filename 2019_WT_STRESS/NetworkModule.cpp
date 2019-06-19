@@ -19,7 +19,7 @@ using namespace chrono;
 
 extern HWND		hWnd;
 
-const static int MAX_TEST = 284;
+const static int MAX_TEST = 200;
 const static int INVALID_ID = -1;
 const static int MAX_PACKET_SIZE = 255;
 const static int MAX_BUFF_SIZE = 255;
@@ -28,8 +28,7 @@ extern int mod;
 
 #pragma comment (lib, "ws2_32.lib")
 
-#include "..\±³¼ö´Ô\2019__WT_NPC\2019_WT_SERVER\2019_WT_SERVER\protocol.h"
-//#include "..\2019_WT_SERVER\protocol.h"
+#include "2019_ÅÒÇÁ_protocol.h"
 
 HANDLE g_hiocp;
 
@@ -105,16 +104,16 @@ void DisconnectClient(int ci)
 void ProcessPacket(int ci, unsigned char packet[])
 {
 	switch (packet[1]) {
-	case SC_MOVE_PLAYER: {
-		sc_packet_move_player *pos_packet = reinterpret_cast<sc_packet_move_player *>(packet);
+	case SC_POSITION: {
+		sc_packet_position *pos_packet = reinterpret_cast<sc_packet_position *>(packet);
 		if (INVALID_ID == g_clients[ci].id) g_clients[ci].id = ci;
 		if (ci == pos_packet->id) {
 			g_clients[ci].x = pos_packet->x;
 			g_clients[ci].y = pos_packet->y;
 		}
 		} break;
-	case SC_PUT_PLAYER: break;
-	case SC_REMOVE_PLAYER: break;
+	case SC_ADD_OBJECT: break;
+	case SC_REMOVE_OBJECT: break;
 	case SC_CHAT: break;
 	case SC_LOGIN_OK: break;
 	default: MessageBox(hWnd, L"Unknown Packet Type", L"ERROR", 0);
@@ -270,11 +269,11 @@ void Test_Thread()
 			if (false == g_clients[i].connect) continue;
 
 			if (false == g_clients[i].is_init_ok) {
-				cs_packet_up my_packet;
+				cs_packet_attack my_packet;
 				my_packet.size = sizeof(my_packet);
 
-				if(CS_CCU_MOD == mod) my_packet.type = CS_CCU_MOD;
-				else if (CS_HOTSPOT_MOD == mod) my_packet.type = CS_HOTSPOT_MOD;
+				if(CS_CCU_TEST == mod) my_packet.type = CS_CCU_TEST;
+				else if (CS_HOTSPOT_TEST == mod) my_packet.type = CS_HOTSPOT_TEST;
 
 				SendPacket(i, &my_packet);
 				g_clients[i].is_init_ok = true;
@@ -283,13 +282,14 @@ void Test_Thread()
 			if (g_clients[i].last_move_time + 1s > high_resolution_clock::now()) continue;
 
 			g_clients[i].last_move_time = high_resolution_clock::now();
-			cs_packet_up my_packet;
+			cs_packet_move my_packet;
+			my_packet.type = CS_MOVE;
 			my_packet.size = sizeof(my_packet);
 			switch (rand() % 4) {
-			case 0: my_packet.type = CS_UP; break;
-			case 1: my_packet.type = CS_DOWN; break;
-			case 2: my_packet.type = CS_LEFT; break;
-			case 3: my_packet.type = CS_RIGHT; break;
+			case 0: my_packet.direction = 0; break;
+			case 1: my_packet.direction = 1; break;
+			case 2: my_packet.direction = 2; break;
+			case 3: my_packet.direction = 3; break;
 			}
 			SendPacket(i, &my_packet);
 		}

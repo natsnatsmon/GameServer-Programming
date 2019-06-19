@@ -3,9 +3,9 @@
 constexpr int MAX_USER = 10000;
 constexpr int MAX_STR_LEN = 50;
 constexpr int MAX_ID_LEN = 10;
-
 //constexpr int NPC_ID_START = 10000;
-constexpr int NUM_NPC = 30001;
+constexpr int NUM_NPC = 7654;
+constexpr int NUM_ITEM = 6;
 
 #define WORLD_WIDTH		300
 #define WORLD_HEIGHT	300
@@ -22,6 +22,7 @@ constexpr int NUM_NPC = 30001;
 #define CS_LOGOUT			5
 #define CS_CCU_TEST			6
 #define CS_HOTSPOT_TEST		7
+
 
 #define SC_LOGIN_OK			1
 #define SC_LOGIN_FAIL		2
@@ -44,6 +45,19 @@ constexpr int NUM_NPC = 30001;
 // TYPE
 #define PEACE 1 
 #define WAR   2
+
+// MOVE TYPE
+#define NO_MOVE  1
+#define YES_MOVE 2
+
+// ITEM
+#define SUN_SET 0
+#define CLOUD	1
+#define MOON	2
+
+#define CROWN	3
+#define BREATH	4
+#define SAINT_SWORD	5
 
 #pragma pack(push ,1)
 
@@ -112,6 +126,7 @@ struct sc_packet_chat {
 struct cs_packet_login {
 	char	size;
 	char	type;
+	char player_kind;
 	char player_id[10];
 };
 

@@ -530,8 +530,8 @@ int Game_Main(void *parms)
 	g_pSprite->Begin(D3DXSPRITE_ALPHABLEND | D3DXSPRITE_SORT_TEXTURE);
 
 	// draw the background reactor image
-	for (int i = 0; i<10; ++i)
-		for (int j = 0; j<10; ++j)
+	for (int i = 0; i<20; ++i)
+		for (int j = 0; j<20; ++j)
 		{
 			int tile_x = i + g_left_x;
 			int tile_y = j + g_top_y;

@@ -1,0 +1,238 @@
+function set_PIXIE_info(id)
+	myid = id;
+
+	mystate = 0;
+	mytarget = -1;
+	
+	name = "PIXIE";
+	kind = 0;
+	type = 1;
+	move_type = 1;
+	
+	if(math.random(0, 1) == 0) then
+		x = math.random(0 + space, 55 - space);
+	else
+		x = math.random(245 + space, 300 - space);
+	end;
+	y = math.random(0 + space, 300 - space);
+	
+	LEVEL = 5;
+	EXP = 25;
+	GOLD = 2;
+	HP = 10;
+	ATTACK = 10;
+
+	API_load_NPC_info(myid, kind, type, move_type, x, y, LEVEL, EXP, GOLD, HP, ATTACK);
+end;
+
+function set_PUCK_info(id)
+	myid = id;
+
+	mystate = 0;
+	mytarget = -1;
+	
+	name = "PUCK";
+	kind = 0;
+	type = 2;
+	move_type = 1;
+	
+	if(math.random(0, 1) == 0) then
+		x = math.random(55 + space, 100 - space);
+	else
+		x = math.random(200 + space, 245 - space);
+	end;
+	y = math.random(55 + space, 245 - space);
+	
+	LEVEL = 50;
+	EXP = 500;
+	GOLD = 30;
+	HP = 450;
+	ATTACK = 210;
+
+	API_load_NPC_info(myid, kind, type, move_type, x, y, LEVEL, EXP, GOLD, HP, ATTACK);
+end;	
+
+function set_DULLAHAN_info(id)
+	myid = id;
+	
+	mystate = 0;
+	mytarget = -1;
+	
+	name = "DULLAHAN";
+	kind = 0;
+	type = 2;
+	move_type = 2;
+	
+	if(math.random(0, 1) == 0) then
+		x = math.random(100 + space , 130 - space);
+	else
+		x = math.random(170 + space, 200 - space);
+	end;
+	y = math.random(100 + space, 200 - space);
+	
+	LEVEL = 105;
+	EXP = 2100;
+	GOLD = 450;
+	HP = 1850;
+	ATTACK = 350;
+
+	API_load_NPC_info(myid, kind, type, move_type, x, y, LEVEL, EXP, GOLD, HP, ATTACK);
+end;
+
+function set_BEHEMOTH_info(id)
+	myid = id;
+
+	mystate = 0;
+	mytarget = -1;
+	
+	name = "BEHEMOTH";
+	kind = 1;
+	type = 2;
+	move_type = 2;
+	
+	x = math.random(0 + space, 300 - space);
+	y = math.random(245 + space, 300 - space);
+	
+	LEVEL = 3;
+	EXP = 60;
+	GOLD = 1;
+	HP = 20;
+	ATTACK = 25;
+
+	API_load_NPC_info(myid, kind, type, move_type, x, y, LEVEL, EXP, GOLD, HP, ATTACK);
+end;
+
+function set_LEVIATHAN_info(id)
+	myid = id;
+
+	mystate = 0;
+	mytarget = -1;
+	
+	name = "LEVIATHAN";
+	kind = 1;
+	type = 1;
+	move_type = 1;
+	
+	x = math.random(55 + space, 245 - space);
+	y = math.random(200 + space, 245 - space);
+	
+	LEVEL = 45;
+	EXP = 225;
+	GOLD = 70;
+	HP = 280;
+	ATTACK = 150;
+
+	API_load_NPC_info(myid, kind, type, move_type, x, y, LEVEL, EXP, GOLD, HP, ATTACK);
+end;
+
+function set_MAMMON_info(id)
+	myid = id;
+
+	mystate = 0;
+	mytarget = -1;
+	
+	name = "MAMMON";
+	kind = 1;
+	type = 1;
+	move_type = 2;
+	
+	x = math.random(100 + space, 200 - space);
+	y = math.random(170 + space, 200 - space);
+	
+	LEVEL = 80;
+	EXP = 800;
+	GOLD = 180;
+	HP = 90;
+	ATTACK = 270;
+
+	API_load_NPC_info(myid, kind, type, move_type, x, y, LEVEL, EXP, GOLD, HP, ATTACK);
+end;
+
+function set_URIEL_info(id)
+	myid = id;
+
+	mystate = 0;
+	mytarget = -1;
+	
+	name = "URIEL";
+	kind = 2;
+	type = 2;
+	move_type = 2;
+	
+	x = math.random(0 + space, 300 - space);
+	y = math.random(0 + space, 55 - space);
+	
+	LEVEL = 4;
+	EXP = 80;
+	GOLD = 3;
+	HP = 60;
+	ATTACK = 30;
+
+	API_load_NPC_info(myid, kind, type, move_type, x, y, LEVEL, EXP, GOLD, HP, ATTACK);
+end;
+
+function set_GABRIEL_info(id)
+	myid = id;
+
+	mystate = 0;
+	mytarget = -1;
+	
+	name = "GABRIEL";
+	kind = 2;
+	type = 2;
+	move_type = 1;
+	
+	x = math.random(55 + space, 245 - space);
+	y = math.random(55 + space, 100 - space);
+	
+	LEVEL = 20;
+	EXP = 100;
+	GOLD = 10;
+	HP = 110;
+	ATTACK = 135;
+	API_load_NPC_info(myid, kind, type, move_type, x, y, LEVEL, EXP, GOLD, HP, ATTACK);
+end;
+
+function set_METATHRON_info(id)
+	myid = id;
+
+	mystate = 0;
+	mytarget = -1;
+	
+	name = "METATHRON";
+	kind = 0;
+	type = 1;
+	move_type = 1;
+	
+	x = math.random(100 + space, 200 - space);
+	y = math.random(100 + space, 130 - space);
+	
+	LEVEL = 160;
+	EXP = 3200;
+	GOLD = 720;
+	HP = 3350;
+	ATTACK = 480;
+	API_load_NPC_info(myid, kind, type, move_type, x, y, LEVEL, EXP, GOLD, HP, ATTACK);
+end;
+
+function set_TUMYEONGDRAGON_info(id)
+	myid = id;
+
+	mystate = 0;
+	mytarget = -1;
+	
+	name = "TUMYEONGDRAGON";
+	kind = 3;
+	type = 2;
+	move_type = 2;
+	
+	x = 150;
+	y = 150;
+	
+	LEVEL = 330;
+	EXP = 6600;
+	GOLD = 3200;
+	HP = 65535;
+	ATTACK = 250;
+	API_load_NPC_info(myid, kind, type, move_type, x, y, LEVEL, EXP, GOLD, HP, ATTACK);
+end;

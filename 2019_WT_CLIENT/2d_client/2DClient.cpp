@@ -16,7 +16,7 @@
 #include <d3d9.h>     // directX includes
 #include "d3dx9tex.h"     // directX includes
 #include "gpdumb1.h"
-#include "..\..\Tripple_Accent_SERVER\2019_籤Щ_protocol.h"
+#include "2019_籤Щ_protocol.h"
 
 #pragma comment (lib, "ws2_32.lib")
 
@@ -29,7 +29,7 @@
 #define WINDOW_CLASS_NAME L"WINXCLASS"  // class name
 
 #define WINDOW_WIDTH    720   // size of window
-#define WINDOW_HEIGHT   765
+#define WINDOW_HEIGHT   840
 
 #define	BUF_SIZE				1024
 #define	WM_SOCKET				WM_USER + 1
@@ -43,25 +43,26 @@ int Game_Main(void *parms = NULL);
 
 // GLOBALS ////////////////////////////////////////////////
 
-HWND hIdInputBox, hSendButton;
+HWND hIdInputBox, hSendButton, hKindRadioButton;
 HWND main_window_handle = NULL; // save the window handle
 HINSTANCE main_instance = NULL; // save the instance
 char buffer[80];                // used to print text
 
 								// demo globals
 BOB			player;				// Ы溯檜橫 Unit
+BOB			tmp_fairy_player, tmp_devil_player, tmp_angel_player;
 BOB			npc[NUM_NPC];      // NPC Unit
 BOB         skelaton[MAX_USER];     // the other player skelaton
 
 BITMAP_IMAGE reactor;      // the background   
 
-BITMAP_IMAGE black_tile;
-BITMAP_IMAGE white_tile;
+BITMAP_IMAGE grass_tile;
+BITMAP_IMAGE sand_tile;
 
 #define TILE_WIDTH 32
 #define UNIT_TEXTURE  0
 
-char cl_id[20];
+char	cl_id[20];
 SOCKET  g_mysocket;
 WSABUF	send_wsabuf;
 char 	send_buffer[BUF_SIZE];
@@ -93,21 +94,31 @@ void ProcessPacket(char *ptr)
 			reinterpret_cast<sc_packet_login_ok *>(ptr);
 		g_myid = packet->id;
 		g_mykind = packet->kind;
-		player.x = packet->x;
-		player.y = packet->y;
 		g_myhp = packet->HP;
 		g_mylevel = packet->LEVEL;
 		g_myattack = packet->ATTACK;
 		g_myexp = packet->EXP;
 		g_mygold = packet->GOLD;
 		is_login_ok = true;
+
+		Load_Texture(L"TA_player.PNG", UNIT_TEXTURE, 128, 32);
+
+		if (!Create_BOB32(&player, 0, 0, 32, 32, 1, BOB_ATTR_SINGLE_FRAME)) return;
+		Load_Frame_BOB32(&player, UNIT_TEXTURE, 0, (int)g_mykind+1, 0, BITMAP_EXTRACT_MODE_CELL);
+
+		player.x = packet->x;
+		player.y = packet->y;
 	}
+	break;
 	case SC_LOGIN_FAIL:
 	{
 		sc_packet_login_fail *packet =
 			reinterpret_cast<sc_packet_login_fail *>(ptr);
 		is_login_ok = false;
+
+		Game_Shutdown();
 	}
+	break;
 	case SC_POSITION:
 	{
 		sc_packet_position *my_packet = reinterpret_cast<sc_packet_position *>(ptr);
@@ -162,8 +173,8 @@ void ProcessPacket(char *ptr)
 			npc[id].exp = my_packet->EXP;
 			npc[id].attr |= BOB_ATTR_VISIBLE;
 		}
-		break;
 	}
+	break;
 	case SC_REMOVE_OBJECT:
 	{
 		sc_packet_remove_object *my_packet = reinterpret_cast<sc_packet_remove_object *>(ptr);
@@ -180,17 +191,19 @@ void ProcessPacket(char *ptr)
 		else if(my_packet->obj_class == NPC) {
 			npc[other_id].attr &= ~BOB_ATTR_VISIBLE;
 		}
-		break;
 	}
+		break;
 	case SC_CHAT:
 	{
 		sc_packet_chat *my_packet = reinterpret_cast<sc_packet_chat *>(ptr);
 		int other_id = my_packet->id;
-		if (other_id == g_myid) {
+		int obj_type = my_packet->obj_class;
+
+		if (obj_type == PLAYER && other_id == g_myid) {
 			wcsncpy_s(player.message, my_packet->message, 256);
 			player.message_time = GetTickCount();
 		}
-		else if (other_id < MAX_USER) {
+		else if (obj_type == PLAYER && other_id < MAX_USER) {
 			wcsncpy_s(skelaton[other_id].message, my_packet->message, 256);
 			skelaton[other_id].message_time = GetTickCount();
 		}
@@ -198,9 +211,27 @@ void ProcessPacket(char *ptr)
 			wcsncpy(npc[other_id].message, my_packet->message, 256);
 			npc[other_id].message_time = GetTickCount();
 		}
-		break;
 
 	}
+		break;
+
+	case SC_STAT_CHANGE:
+	{
+		sc_packet_stat_change *my_packet = reinterpret_cast<sc_packet_stat_change *>(ptr);
+		int other_id = my_packet->id;
+		int obj_type = my_packet->obj_class;
+
+		if (obj_type == PLAYER && other_id == g_myid) {
+			g_myhp = my_packet->HP;
+			g_mygold = my_packet->GOLD;
+			g_mylevel = my_packet->LEVEL;
+			g_myexp = my_packet->EXP;
+		}
+		else if (obj_type == PLAYER && other_id < MAX_USER) {
+		}
+	}
+	break;
+
 	//case SC_NPC_CHAT:
 	//{
 	//	sc_packet_chat *my_packet = reinterpret_cast<sc_packet_chat *>(ptr);
@@ -255,28 +286,37 @@ BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 	int buf_len = 0;
 	cs_packet_login *my_packet = reinterpret_cast<cs_packet_login *>(send_buffer);
 	int ret = 0;
+	int select_kind = 0;
 
 	switch (uMsg) {
 	case WM_INITDIALOG:
 		hIdInputBox = GetDlgItem(hDlg, IDC_EDIT1);
 		hSendButton = GetDlgItem(hDlg, IDOK);
+		//hKindRadioButton = GetDlgItem(hDlg, IDC_RADIO1);
 		SendMessage(hIdInputBox, EM_SETLIMITTEXT, 20, 0);
 		return TRUE;
 
 	case WM_COMMAND:
 		switch (LOWORD(wParam)) {
 		case IDOK:
+			if(IsDlgButtonChecked(hDlg, IDC_RADIO1)) select_kind = 0;
+			else if (IsDlgButtonChecked(hDlg, IDC_RADIO2)) select_kind = 2;
+			else if (IsDlgButtonChecked(hDlg, IDC_RADIO3)) select_kind = 1;
+			else return TRUE;
+
 			GetDlgItemText(hDlg, IDC_EDIT1, buf, 21);
 			SetFocus(hIdInputBox);
 			ZeroMemory(cl_id, 20);
 			
 			buf_len = (int)wcslen(buf);
+			if (buf_len == 0) return TRUE;
 			wcstombs(cl_id, buf, buf_len + 1);
 
 			// 蕾樓 蹂羶 爾頂撿湛
 			DWORD iobyte;
 			my_packet->size = sizeof(cs_packet_login);
 			send_wsabuf.len = sizeof(cs_packet_login);
+			my_packet->player_kind = select_kind;
 			my_packet->type = CS_LOGIN;
 			ZeroMemory(my_packet->player_id, 10);
 			strcpy(my_packet->player_id, cl_id);
@@ -318,7 +358,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd,
 	{
 	case WM_CHAR :
 	{
-		if (wparam == 'A') {
+		if (wparam == 'A' || wparam == 'a') {
 			cs_packet_attack *my_packet = reinterpret_cast<cs_packet_attack *>(send_buffer);
 			my_packet->size = sizeof(my_packet);
 			my_packet->type = CS_ATTACK;
@@ -329,6 +369,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd,
 	}
 		break;
 	case WM_KEYDOWN: {
+		if (wparam == VK_RETURN);
+
 		int x = 0, y = 0;
 		if (wparam == VK_RIGHT)	x += 1;
 		if (wparam == VK_LEFT)	x -= 1;
@@ -498,6 +540,18 @@ int Game_Init(void *parms)
 	// this function is where you do all the initialization 
 	// for your game
 
+	// init my info
+	g_myid = 0;
+	g_myexp = 10;
+	g_mygold = 10000;
+	g_mytype = PLAYER;
+	g_mykind = FAIRY;
+	g_mylevel = 10;
+	g_myhp = 8250;
+	g_myattack = 1024;
+	is_login_ok = false;
+
+
 	// set up screen dimensions
 	screen_width = WINDOW_WIDTH;
 	screen_height = WINDOW_HEIGHT;
@@ -509,26 +563,28 @@ int Game_Init(void *parms)
 
 	// create and load the reactor bitmap image
 	Create_Bitmap32(&reactor, 0, 0, 256, 257);
-	Create_Bitmap32(&black_tile, 0, 0, 256, 257);
-	Create_Bitmap32(&white_tile, 0, 0, 256, 257);
+	Create_Bitmap32(&grass_tile, 0, 0, 128, 32);
+	Create_Bitmap32(&sand_tile, 0, 0, 128, 32);
 	Load_Image_Bitmap32(&reactor, L"CHESSMAP.BMP", 0, 0, BITMAP_EXTRACT_MODE_ABS);
-	Load_Image_Bitmap32(&black_tile, L"CHESSMAP.BMP", 0, 0, BITMAP_EXTRACT_MODE_ABS);
-	black_tile.x = 32;
-	black_tile.y = 2;
-	black_tile.height = TILE_WIDTH;
-	black_tile.width = TILE_WIDTH;
-	Load_Image_Bitmap32(&white_tile, L"CHESSMAP.BMP", 0, 0, BITMAP_EXTRACT_MODE_ABS);
-	white_tile.x = 2;
-	white_tile.y = 2;
-	white_tile.height = TILE_WIDTH;
-	white_tile.width = TILE_WIDTH;
+	Load_Image_Bitmap32(&grass_tile, L"TA_tile.BMP", 0, 0, BITMAP_EXTRACT_MODE_ABS);
+	grass_tile.x = 0;
+	grass_tile.y = 0;
+	grass_tile.height = TILE_WIDTH;
+	grass_tile.width = TILE_WIDTH;
+	Load_Image_Bitmap32(&sand_tile, L"TA_tile.BMP", 0, 0, BITMAP_EXTRACT_MODE_ABS);
+	sand_tile.x = 64;
+	sand_tile.y = 0;
+	sand_tile.height = TILE_WIDTH;
+	sand_tile.width = TILE_WIDTH;
+
 
 	// now let's load in all the frames for the skelaton!!!
 
-	Load_Texture(L"CHESS2.PNG", UNIT_TEXTURE, 196, 32);
+	Load_Texture(L"TA_player.PNG", UNIT_TEXTURE, 128, 32);
+
 
 	if (!Create_BOB32(&player, 0, 0, 32, 32, 1, BOB_ATTR_SINGLE_FRAME)) return(0);
-	Load_Frame_BOB32(&player, UNIT_TEXTURE, 0, 2, 0, BITMAP_EXTRACT_MODE_CELL);
+	Load_Frame_BOB32(&player, UNIT_TEXTURE, 0, 1, 0, BITMAP_EXTRACT_MODE_CELL);
 
 	// set up stating state of skelaton
 	Set_Animation_BOB32(&player, 0);
@@ -550,21 +606,106 @@ int Game_Init(void *parms)
 		Set_Pos_BOB32(&skelaton[i], 50, 50);
 	}
 
+	Load_Texture(L"TA_monster.PNG", UNIT_TEXTURE, 288, 32);
+
 	// create skelaton bob
-	for (int i = 0; i < NUM_NPC; ++i) {
-		if (!Create_BOB32(&npc[i], 0, 0, 32, 32, 1, BOB_ATTR_SINGLE_FRAME))
-			return(0);
-		Load_Frame_BOB32(&npc[i], UNIT_TEXTURE, 0, 4, 0, BITMAP_EXTRACT_MODE_CELL);
+	for (int npc_id = 0; npc_id < NUM_NPC - 4; ++npc_id) {
+		if (npc_id < 1500) {
+			if (!Create_BOB32(&npc[npc_id], 0, 0, 32, 32, 1, BOB_ATTR_SINGLE_FRAME))
+				return(0);
+			Load_Frame_BOB32(&npc[npc_id], UNIT_TEXTURE, 0, 0, 0, BITMAP_EXTRACT_MODE_CELL);
+		}
+		else if (npc_id >= 1500 && npc_id < 3000) {
+			if (!Create_BOB32(&npc[npc_id], 0, 0, 32, 32, 1, BOB_ATTR_SINGLE_FRAME))
+				return(0);
+
+			Load_Frame_BOB32(&npc[npc_id], UNIT_TEXTURE, 0, 3, 0, BITMAP_EXTRACT_MODE_CELL);
+		}
+		else if (npc_id >= 3000 && npc_id < 4500) {
+			if (!Create_BOB32(&npc[npc_id], 0, 0, 32, 32, 1, BOB_ATTR_SINGLE_FRAME))
+				return(0);
+
+			Load_Frame_BOB32(&npc[npc_id], UNIT_TEXTURE, 0, 6, 0, BITMAP_EXTRACT_MODE_CELL);
+		}
+
+		else if (npc_id >= 4500 && npc_id < 5250) {
+			if (!Create_BOB32(&npc[npc_id], 0, 0, 32, 32, 1, BOB_ATTR_SINGLE_FRAME))
+				return(0);
+
+			Load_Frame_BOB32(&npc[npc_id], UNIT_TEXTURE, 0, 1, 0, BITMAP_EXTRACT_MODE_CELL);
+		}
+		else if (npc_id >= 5250 && npc_id < 6000) {
+			if (!Create_BOB32(&npc[npc_id], 0, 0, 32, 32, 1, BOB_ATTR_SINGLE_FRAME))
+				return(0);
+
+			Load_Frame_BOB32(&npc[npc_id], UNIT_TEXTURE, 0, 4, 0, BITMAP_EXTRACT_MODE_CELL);
+		}
+		else if (npc_id >= 6000 && npc_id < 6750) {
+			if (!Create_BOB32(&npc[npc_id], 0, 0, 32, 32, 1, BOB_ATTR_SINGLE_FRAME))
+				return(0);
+
+			Load_Frame_BOB32(&npc[npc_id], UNIT_TEXTURE, 0, 7, 0, BITMAP_EXTRACT_MODE_CELL);
+		}
+
+		else if (npc_id >= 6750 && npc_id < 7050) {
+			if (!Create_BOB32(&npc[npc_id], 0, 0, 32, 32, 1, BOB_ATTR_SINGLE_FRAME))
+				return(0);
+
+			Load_Frame_BOB32(&npc[npc_id], UNIT_TEXTURE, 0, 2, 0, BITMAP_EXTRACT_MODE_CELL);
+		}
+		else if (npc_id >= 7050 && npc_id < 7350) {
+			if (!Create_BOB32(&npc[npc_id], 0, 0, 32, 32, 1, BOB_ATTR_SINGLE_FRAME))
+				return(0);
+			Load_Frame_BOB32(&npc[npc_id], UNIT_TEXTURE, 0, 5, 0, BITMAP_EXTRACT_MODE_CELL);
+		}
+		else if (npc_id >= 7350 && npc_id < 7650) {
+			if (!Create_BOB32(&npc[npc_id], 0, 0, 32, 32, 1, BOB_ATTR_SINGLE_FRAME))
+				return(0);
+			Load_Frame_BOB32(&npc[npc_id], UNIT_TEXTURE, 0, 8, 0, BITMAP_EXTRACT_MODE_CELL);
+		}
 
 		// set up stating state of skelaton
-		Set_Animation_BOB32(&npc[i], 0);
-		Set_Anim_Speed_BOB32(&npc[i], 2);
-		Set_Vel_BOB32(&npc[i], 0, 0);
-		Set_Pos_BOB32(&npc[i], 0, 0);
+		Set_Animation_BOB32(&npc[npc_id], 0);
+		Set_Anim_Speed_BOB32(&npc[npc_id], 2);
+		Set_Vel_BOB32(&npc[npc_id], 0, 0);
+		Set_Pos_BOB32(&npc[npc_id], 0, 0);
 		// Set_ID(&npc[i], i);
 	}
 
+	Load_Texture(L"TA_npc.PNG", UNIT_TEXTURE, 256, 64);
 
+	for (int npc_id = 7651; npc_id < NUM_NPC; ++npc_id) {
+		if (!Create_BOB32(&npc[npc_id], 0, 0, 64, 64, 1, BOB_ATTR_SINGLE_FRAME))
+			return(0);
+
+		if (npc_id == 7651) {
+			Load_Frame_BOB32(&npc[npc_id], UNIT_TEXTURE, 0, 0, 0, BITMAP_EXTRACT_MODE_CELL);
+		}
+		else if (npc_id == 7652) {
+			Load_Frame_BOB32(&npc[npc_id], UNIT_TEXTURE, 0, 1, 0, BITMAP_EXTRACT_MODE_CELL);
+		}
+		else if (npc_id == 7653) {
+			Load_Frame_BOB32(&npc[npc_id], UNIT_TEXTURE, 0, 2, 0, BITMAP_EXTRACT_MODE_CELL);
+		}
+
+
+		Set_Animation_BOB32(&npc[npc_id], 0);
+		Set_Anim_Speed_BOB32(&npc[npc_id], 2);
+		Set_Vel_BOB32(&npc[npc_id], 0, 0);
+		Set_Pos_BOB32(&npc[npc_id], 0, 0);
+
+	}
+
+	Load_Texture(L"TA_npc.PNG", UNIT_TEXTURE, 384, 96);
+	if (!Create_BOB32(&npc[7650], 0, 0, 96, 96, 1, BOB_ATTR_SINGLE_FRAME))
+		return(0);
+
+	Load_Frame_BOB32(&npc[7650], UNIT_TEXTURE, 0, 3, 0, BITMAP_EXTRACT_MODE_CELL);
+
+	Set_Animation_BOB32(&npc[7650], 0);
+	Set_Anim_Speed_BOB32(&npc[7650], 2);
+	Set_Vel_BOB32(&npc[7650], 0, 0);
+	Set_Pos_BOB32(&npc[7650], 0, 0);
 
 	// set clipping rectangle to screen extents so mouse cursor
 	// doens't mess up at edges
@@ -609,8 +750,8 @@ int Game_Shutdown(void *parms)
 	// release all resources that you allocated
 
 	// kill the reactor
-	Destroy_Bitmap32(&black_tile);
-	Destroy_Bitmap32(&white_tile);
+	Destroy_Bitmap32(&grass_tile);
+	Destroy_Bitmap32(&sand_tile);
 	Destroy_Bitmap32(&reactor);
 
 	// kill skelaton
@@ -650,16 +791,16 @@ int Game_Main(void *parms)
 	g_pSprite->Begin(D3DXSPRITE_ALPHABLEND | D3DXSPRITE_SORT_TEXTURE);
 
 	// draw the background reactor image
-	for (int i = 0; i<21; ++i)
-		for (int j = 0; j<21; ++j)
+	for (int i = 0; i<20; ++i)
+		for (int j = 0; j<20; ++j)
 		{
 			int tile_x = i + g_left_x;
 			int tile_y = j + g_top_y;
 			if ((tile_x <0) || (tile_y<0)) continue;
 			if (((tile_x >> 2) % 2) == ((tile_y >> 2) % 2))
-				Draw_Bitmap32(&white_tile, TILE_WIDTH * i + 7, TILE_WIDTH * j + 7);
+				Draw_Bitmap32(&sand_tile, TILE_WIDTH * i + 30, TILE_WIDTH * j + 60);
 			else
-				Draw_Bitmap32(&black_tile, TILE_WIDTH * i + 7, TILE_WIDTH * j + 7);
+				Draw_Bitmap32(&grass_tile, TILE_WIDTH * i + 30, TILE_WIDTH * j + 60);
 		}
 	//	Draw_Bitmap32(&reactor);
 
@@ -673,9 +814,25 @@ int Game_Main(void *parms)
 	for (int i = 0; i < NUM_NPC; ++i) Draw_BOB32(&npc[i]);
 
 	// draw some text
+	wchar_t namebuf[20];
+	mbstowcs(namebuf, cl_id, strlen(cl_id)+1);
+	wchar_t ui[100];
+	wsprintf(ui, L"忙式式式式式式式式式式式式式式式式式式式式式式式式式式式式忖");
+	Draw_Text_D3D(ui, 30, 5, D3DCOLOR_ARGB(255, 255, 255, 0));
+	wsprintf(ui, L"忙式式式式式式式式式式式式 SYSTEM 式式式式式式式式式式式忖");
+	Draw_Text_D3D(ui, 30, WINDOW_HEIGHT - 120, D3DCOLOR_ARGB(255, 255, 255, 0));
+
+	wchar_t ui_text[300];
+	wsprintf(ui_text, L"  %10s 弛 Lv. %2d 弛 HP %4d 弛 EXP %6d 弛 %5dG  ", namebuf, g_mylevel, g_myhp, g_myexp, g_mygold);
+	Draw_Text_D3D(ui_text, 30, 20, D3DCOLOR_ARGB(255, 255, 255, 255));
+
+	wsprintf(ui, L"戌式式式式式式式式式式式式式式式式式式式式式式式式式式式式戎");
+	Draw_Text_D3D(ui, 30, 35, D3DCOLOR_ARGB(255, 255, 255, 0));
+	Draw_Text_D3D(ui, 30, WINDOW_HEIGHT - 60, D3DCOLOR_ARGB(255, 255, 255, 0));
+
 	wchar_t text[300];
 	wsprintf(text, L"MY POSITION (%3d, %3d)", player.x, player.y);
-	Draw_Text_D3D(text, 10, screen_height - 64, D3DCOLOR_ARGB(255, 255, 255, 255));
+	Draw_Text_D3D(text, 30, WINDOW_HEIGHT - 135, D3DCOLOR_ARGB(255, 255, 255, 255));
 
 	g_pSprite->End();
 	g_pd3dDevice->EndScene();

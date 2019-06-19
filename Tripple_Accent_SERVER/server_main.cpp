@@ -28,6 +28,7 @@ struct OVER_EX {
 class SOCKETINFO
 {
 public:
+	bool is_dummy;
 	bool in_use;
 	OVER_EX over_ex;
 	SOCKET socket;
@@ -37,10 +38,11 @@ public:
 	bool is_login;
 
 	char  login_id[MAX_ID_LEN];
-	char  kind;
+	char  login_kind, kind;
 	short x, y;
 	unsigned short HP, LEVEL, ATTACK;
 	int   EXP, GOLD;
+	short item[NUM_ITEM];
 
 	unordered_set <int> view_list;
 	unordered_set <int> npc_view_list;
@@ -61,9 +63,8 @@ public:
 
 	bool is_sleeping;
 	bool is_die;
-	bool is_movable;
-	char kind;
-	char type;
+
+	char kind, type, move_type;
 	unsigned short x, y;
 	unsigned short LEVEL, HP, ATTACK, GOLD, EXP;
 
@@ -135,151 +136,228 @@ void Initialize_PC()
 	for (int i = 0; i < MAX_USER; ++i) {
 		clients[i].in_use = false;
 		clients[i].is_login = false;
+		clients[i].is_dummy = false;
 	}
 }
 void Initialize_NPC()
 {
-	for (int npc_id = 0; npc_id < 10000; ++npc_id) {
-		npcs[npc_id].kind = FAIRY;
-		
-		// 픽시
-		if (npc_id < 3500) {
+	wcout << L"몬스터 가상머신 초기화 시작\n";
+	int space = 5;
+
+	for (int npc_id = 0; npc_id < NUM_NPC; ++npc_id) {
+		if (npc_id < 1500) {
+			npcs[npc_id].kind = FAIRY;
 			npcs[npc_id].type = PEACE;
-			npcs[npc_id].is_movable = false;
+			npcs[npc_id].move_type = NO_MOVE;
 			npcs[npc_id].LEVEL = 5;
 			npcs[npc_id].EXP = 25;
 			npcs[npc_id].GOLD = 2;
 			npcs[npc_id].HP = 10;
 			npcs[npc_id].ATTACK = 10;
+
+			if(rand() % 2 == 0) npcs[npc_id].x = rand() % 55;
+			else npcs[npc_id].x = rand() % 55 + 245;
+			
+			npcs[npc_id].y = rand() % 290 + 5;
 		}
-		// 퍽
-		else if (npc_id >= 3500 && npc_id < 7000) {
+		else if (npc_id >= 1500 && npc_id < 3000) {
+			npcs[npc_id].kind = DEVIL;
+
 			npcs[npc_id].type = WAR;
-			npcs[npc_id].is_movable = false;
+			npcs[npc_id].move_type = YES_MOVE;
+			npcs[npc_id].LEVEL = 3;
+			npcs[npc_id].EXP = 60;
+			npcs[npc_id].GOLD = 1;
+			npcs[npc_id].HP = 20;
+			npcs[npc_id].ATTACK = 25;
+
+			npcs[npc_id].x = rand() % 290 + 5;
+			npcs[npc_id].y = rand() % 55 + 245;
+
+		}
+		else if (npc_id >= 3000 && npc_id < 4500) {
+			npcs[npc_id].kind = ANGEL;
+
+			npcs[npc_id].type = WAR;
+			npcs[npc_id].move_type = YES_MOVE;
+			npcs[npc_id].LEVEL = 4;
+			npcs[npc_id].EXP = 80;
+			npcs[npc_id].GOLD = 3;
+			npcs[npc_id].HP = 60;
+			npcs[npc_id].ATTACK = 30;
+
+			npcs[npc_id].x = rand() % 290 + 5;
+			npcs[npc_id].y = rand() % 55;
+
+		}
+
+		else if (npc_id >= 4500 && npc_id < 5250) {
+			npcs[npc_id].kind = FAIRY;
+			npcs[npc_id].type = WAR;
+			npcs[npc_id].move_type = NO_MOVE;
 			npcs[npc_id].LEVEL = 50;
 			npcs[npc_id].EXP = 500;
 			npcs[npc_id].GOLD = 30;
 			npcs[npc_id].HP = 450;
 			npcs[npc_id].ATTACK = 210;
+
+			if (rand() % 2 == 0) npcs[npc_id].x = rand() % 45 + 55;
+			else npcs[npc_id].x = rand() % 45 + 200;
+
+			npcs[npc_id].y = rand() % 190 + 55;
 		}
-		// 듀라한
-		else {
+		else if (npc_id >= 5250 && npc_id < 6000) {
+			npcs[npc_id].kind = DEVIL;
+
+			npcs[npc_id].type = PEACE;
+			npcs[npc_id].move_type = NO_MOVE;
+			npcs[npc_id].LEVEL = 45;
+			npcs[npc_id].EXP = 225;
+			npcs[npc_id].GOLD = 70;
+			npcs[npc_id].HP = 280;
+			npcs[npc_id].ATTACK = 150;
+
+			npcs[npc_id].x = rand() % 190 + 55;
+			npcs[npc_id].y = rand() % 45 + 195;
+
+		}
+		else if (npc_id >= 6000 && npc_id < 6750) {
+			npcs[npc_id].kind = ANGEL;
+
+			npcs[npc_id].type = PEACE;
+			npcs[npc_id].move_type = NO_MOVE;
+			npcs[npc_id].LEVEL = 20;
+			npcs[npc_id].EXP = 100;
+			npcs[npc_id].GOLD = 10;
+			npcs[npc_id].HP = 110;
+			npcs[npc_id].ATTACK = 135;
+
+			npcs[npc_id].x = rand() % 190 + 55;
+			npcs[npc_id].y = rand() % 45 + 55;
+
+		}
+
+		else if (npc_id >= 6750 && npc_id < 7050) {
+			npcs[npc_id].kind = FAIRY;
 			npcs[npc_id].type = WAR;
-			npcs[npc_id].is_movable = true;
+			npcs[npc_id].move_type = YES_MOVE;
 			npcs[npc_id].LEVEL = 105;
 			npcs[npc_id].EXP = 2100;
 			npcs[npc_id].GOLD = 450;
 			npcs[npc_id].HP = 1850;
 			npcs[npc_id].ATTACK = 350;
 
+			if (rand() % 2 == 0) npcs[npc_id].x = rand() % 35 + 110;
+			else npcs[npc_id].x = rand() % 35 + 160;
+
+			npcs[npc_id].y = rand() % 100 + 100;
 		}
+		else if (npc_id >= 7050 && npc_id < 7050) {
+			npcs[npc_id].kind = DEVIL;
 
-		npcs[npc_id].x = rand() % 200 + 50;
-		npcs[npc_id].y = rand() % 100 + 175;
-	}
-
-	for (int npc_id = 10000; npc_id < 20000; ++npc_id) {
-		npcs[npc_id].kind = DEVIL;
-
-		// 레비아탄
-		if (npc_id < 13500) {
-			npcs[npc_id].type = WAR;
-			npcs[npc_id].is_movable = true;
-			npcs[npc_id].LEVEL = 3;
-			npcs[npc_id].EXP = 60;
-			npcs[npc_id].GOLD = 1;
-			npcs[npc_id].HP = 20;
-			npcs[npc_id].ATTACK = 25;
-		}
-		// 베히모스
-		else if (npc_id >= 13500 && npc_id < 17000) {
 			npcs[npc_id].type = PEACE;
-			npcs[npc_id].is_movable = false;
-			npcs[npc_id].LEVEL = 45;
-			npcs[npc_id].EXP = 225;
-			npcs[npc_id].GOLD = 70;
-			npcs[npc_id].HP = 280;
-			npcs[npc_id].ATTACK = 150;
-		}
-		// 마몬
-		else {
-			npcs[npc_id].type = PEACE;
-			npcs[npc_id].is_movable = true;
+			npcs[npc_id].move_type = YES_MOVE;
 			npcs[npc_id].LEVEL = 80;
 			npcs[npc_id].EXP = 800;
 			npcs[npc_id].GOLD = 180;
 			npcs[npc_id].HP = 900;
 			npcs[npc_id].ATTACK = 270;
-		}
 
-		npcs[npc_id].x = rand() % 100 + 175;
-		npcs[npc_id].y = rand() % 200 + 50;
-	}
-	
-	for (int npc_id = 20000; npc_id < 30000; ++npc_id) {
-		npcs[npc_id].kind = DEVIL;
+			npcs[npc_id].x = rand() % 90 + 100;
+			npcs[npc_id].y = rand() % 35 + 160;
 
-		// 우리엘
-		if (npc_id < 23500) {
-			npcs[npc_id].type = WAR;
-			npcs[npc_id].is_movable = true;
-			npcs[npc_id].LEVEL = 4;
-			npcs[npc_id].EXP = 80;
-			npcs[npc_id].GOLD = 3;
-			npcs[npc_id].HP = 60;
-			npcs[npc_id].ATTACK = 30;
 		}
-		// 가브리엘
-		else if (npc_id >= 13500 && npc_id < 17000) {
-			npcs[npc_id].type = PEACE;
-			npcs[npc_id].is_movable = false;
-			npcs[npc_id].LEVEL = 20;
-			npcs[npc_id].EXP = 100;
-			npcs[npc_id].GOLD = 10;
-			npcs[npc_id].HP = 110;
-			npcs[npc_id].ATTACK = 135;
-		}
-		// 메타트론
-		else {
+		else if (npc_id >= 7350 && npc_id < 7650) {
+			npcs[npc_id].kind = ANGEL;
+
 			npcs[npc_id].type = WAR;
-			npcs[npc_id].is_movable = true;
+			npcs[npc_id].move_type = YES_MOVE;
 			npcs[npc_id].LEVEL = 160;
 			npcs[npc_id].EXP = 3200;
 			npcs[npc_id].GOLD = 720;
 			npcs[npc_id].HP = 3350;
 			npcs[npc_id].ATTACK = 480;
-		}
 
-		npcs[npc_id].x = rand() % 100 + 75;
-		npcs[npc_id].y = rand() % 200 + 50;
+			npcs[npc_id].x = rand() % 90 + 100;
+			npcs[npc_id].y = rand() % 35 + 110;
+
+		}
+		
+		else if (npc_id == 7650) {
+			npcs[npc_id].kind = DRAGON;
+			npcs[npc_id].type = WAR;
+			npcs[npc_id].move_type = YES_MOVE;
+			npcs[npc_id].LEVEL = 330;
+			npcs[npc_id].EXP = 6600;
+			npcs[npc_id].GOLD = 3200;
+			npcs[npc_id].HP = 65535;
+			npcs[npc_id].ATTACK = 250;
+			npcs[npc_id].x = 150;
+			npcs[npc_id].y = 150;
+		}
+		else if (npc_id == 7651) {
+			npcs[npc_id].kind = FAIRY;
+			npcs[npc_id].type = PEACE;
+			npcs[npc_id].move_type = NO_MOVE;
+			npcs[npc_id].LEVEL = 300;
+			npcs[npc_id].EXP = 0;
+			npcs[npc_id].GOLD = 0;
+			npcs[npc_id].HP = 65535;
+			npcs[npc_id].ATTACK = 0;
+			npcs[npc_id].x = 65;
+			npcs[npc_id].y = 150;
+
+		}
+		else if (npc_id == 7652) {
+			npcs[npc_id].kind = DEVIL;
+			npcs[npc_id].type = PEACE;
+			npcs[npc_id].move_type = NO_MOVE;
+			npcs[npc_id].LEVEL = 300;
+			npcs[npc_id].EXP = 0;
+			npcs[npc_id].GOLD = 0;
+			npcs[npc_id].HP = 65535;
+			npcs[npc_id].ATTACK = 0;
+			npcs[npc_id].x = 150;
+			npcs[npc_id].y = 235;
+		}
+		else if (npc_id == 7653) {
+			npcs[npc_id].kind = ANGEL;
+			npcs[npc_id].type = PEACE;
+			npcs[npc_id].move_type = NO_MOVE;
+			npcs[npc_id].LEVEL = 300;
+			npcs[npc_id].EXP = 0;
+			npcs[npc_id].GOLD = 0;
+			npcs[npc_id].HP = 65535;
+			npcs[npc_id].ATTACK = 0;
+			npcs[npc_id].x = 150;
+			npcs[npc_id].y = 65;
+		}
 	}
 
-	// 투명 드래곤
-	npcs[NUM_NPC - 1].kind = DRAGON;
-	npcs[NUM_NPC - 1].type = WAR;
-	npcs[NUM_NPC - 1].is_movable = true;
-	npcs[NUM_NPC - 1].LEVEL = 330;
-	npcs[NUM_NPC - 1].EXP = 6600;
-	npcs[NUM_NPC - 1].GOLD = 3200;
-	npcs[NUM_NPC - 1].HP = 65535;
-	npcs[NUM_NPC - 1].ATTACK = 250;
-	npcs[NUM_NPC - 1].x = 150;
-	npcs[NUM_NPC - 1].y = 150;
-	
 	for (int npc_id = 0; npc_id < NUM_NPC; ++npc_id) {
 		npcs[npc_id].target_user_id = -1;
 
 		npcs[npc_id].is_sleeping = true;
 		npcs[npc_id].is_die = false;
 
-		add_timer(npc_id, EV_MOVE, high_resolution_clock::now() + 1s);
+		if(npcs[npc_id].move_type == 2)	add_timer(npc_id, EV_MOVE, high_resolution_clock::now() + 1s);
 
 		lua_State *L = npcs[npc_id].L;
 		lua_getglobal(L, "set_npc_info");
 		lua_pushnumber(L, npc_id);
-		lua_pushnumber(L, npcs[npc_id].type);
 		lua_pushnumber(L, npcs[npc_id].kind);
-		lua_pcall(L, 3, 0, 0);
+		lua_pushnumber(L, npcs[npc_id].type);
+		lua_pushnumber(L, npcs[npc_id].move_type);
+		lua_pushnumber(L, npcs[npc_id].x);
+		lua_pushnumber(L, npcs[npc_id].y);
+		lua_pushnumber(L, npcs[npc_id].LEVEL);
+		lua_pushnumber(L, npcs[npc_id].EXP);
+		lua_pushnumber(L, npcs[npc_id].GOLD);
+		lua_pushnumber(L, npcs[npc_id].HP);
+		lua_pushnumber(L, npcs[npc_id].ATTACK);
+		lua_pcall(L, 11, 0, 0);
+
+		lua_register(L, "API_load_NPC_info", API_load_NPC_info);
 
 		lua_register(L, "API_get_player_x", API_get_player_x);
 		lua_register(L, "API_get_player_y", API_get_player_y);
@@ -348,19 +426,50 @@ void worker_thread()
 			delete over_ex;
 		}
 		else if (DB_EVT_SEARCH == over_ex->event_t) {
+			if (!clients[key].is_dummy) {
+				DB_EVENT_ST dev;
+				dev.client_id = key;
+				dev.type = DB_EVT_SEARCH;
+
+				process_db_event(dev);
+			}
+			delete over_ex;
+		}
+		else if (DB_EVT_SAVE == over_ex->event_t) {
+			if (!clients[key].is_dummy) {
+				DB_EVENT_ST dev;
+				dev.client_id = key;
+				dev.type = DB_EVT_SAVE;
+
+				process_db_event(dev);
+			}
+			delete over_ex;
+		}
+		else if (DB_EVT_UPDATE == over_ex->event_t) {
 			DB_EVENT_ST dev;
 			dev.client_id = key;
-			dev.type = DB_EVT_SEARCH;
+			dev.type = DB_EVT_UPDATE;
 
 			process_db_event(dev);
 			delete over_ex;
 		}
-		else if (DB_EVT_SAVE == over_ex->event_t) {
-			DB_EVENT_ST dev;
-			dev.client_id = key;
-			dev.type = DB_EVT_SAVE;
 
-			process_db_event(dev);
+		else if (EV_ATTACK == over_ex->event_t) {
+			EVENT_ST ev;
+			ev.obj_id = key;
+			ev.start_time = high_resolution_clock::now();
+			ev.type = EV_ATTACK;
+			process_event(ev);
+
+			delete over_ex;
+		}
+		else if (EV_NPC_ATTACK == over_ex->event_t) {
+			EVENT_ST ev;
+			ev.obj_id = key;
+			ev.start_time = high_resolution_clock::now();
+			ev.type = EV_NPC_ATTACK;
+			process_event(ev);
+
 			delete over_ex;
 		}
 		else if (EV_MOVE == over_ex->event_t) {
@@ -372,16 +481,32 @@ void worker_thread()
 
 			delete over_ex;
 		}
+		else if (EV_RESURRECTION == over_ex->event_t) {
+			EVENT_ST ev;
+			ev.obj_id = key;
+			ev.start_time = high_resolution_clock::now() + 1s;
+			ev.type = EV_RESURRECTION;
+			process_event(ev);
+
+			delete over_ex;
+		}
+		else if (EV_NPC_RESURRECTION == over_ex->event_t) {
+			EVENT_ST ev;
+			ev.obj_id = key;
+			ev.start_time = high_resolution_clock::now();
+			ev.type = EV_NPC_RESURRECTION;
+			process_event(ev);
+
+			delete over_ex;
+		}
 		else if (EV_PLAYER_MOVE_DETECT == over_ex->event_t) {
-			lua_State *L = npcs[key].L;
-			int player_id = over_ex->target_player;
+			if (npcs[key].type == WAR &&
+				npcs[key].target_user_id == -1) 
+			{
+				int player_id = over_ex->target_player;
 
-			npcs[key].l_lock.lock();
-			lua_getglobal(L, "event_player_move");
-			lua_pushnumber(L, player_id);
-			lua_pcall(L, 1, 0, 0);
-			npcs[key].l_lock.unlock();
-
+				npcs[key].target_user_id = player_id;
+			}
 
 			delete over_ex;
 		}
@@ -492,6 +617,8 @@ int do_accept()
 		clients[new_id].view_list.clear();
 		clients[new_id].npc_view_list.clear();
 		clients[new_id].v_lock.unlock();
+		ZeroMemory(&clients[new_id].item,
+			sizeof(clients[new_id].item));
 
 		ZeroMemory(&clients[new_id].over_ex.over,
 			sizeof(clients[new_id].over_ex.over));
@@ -533,8 +660,10 @@ void do_timer()
 			}
 			timer_queue.pop();
 			timer_lock.unlock();
+
+
 			OVER_EX *over_ex = new OVER_EX;
-			over_ex->event_t = EV_MOVE;
+			over_ex->event_t = ev.type;
 			PostQueuedCompletionStatus(g_iocp, 1, ev.obj_id, &over_ex->over);
 			// process_event(ev);
 		}
@@ -633,6 +762,9 @@ bool search_user_id(int client) {
 
 				// Allocate statement handle  
 				if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+					SQLCloseCursor(hstmt);
+					SQLFreeStmt(hstmt, SQL_UNBIND);
+
 					cout << "SQL DB Connect OK!!\n";
 
 					retcode = SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt);
@@ -646,7 +778,6 @@ bool search_user_id(int client) {
 					len = strnlen_s(query, 128);
 					mbstowcs_s(&wlen, buf, len + 1, query, len);
 
-					wcout << buf << endl;
 
 					retcode = SQLExecDirect(hstmt, (SQLWCHAR *)buf, SQL_NTS);
 
@@ -656,7 +787,7 @@ bool search_user_id(int client) {
 						//retcode = SQLBindCol(hstmt, 1, SQL_INTEGER, &uid, 100, &cb_uid);
 						retcode = SQLBindCol(hstmt, 1, SQL_C_CHAR, uid, 20, &cb_uid);
 						retcode = SQLBindCol(hstmt, 2, SQL_INTEGER, &ukind, 10, &cb_ukind);
-						retcode = SQLBindCol(hstmt, 3, SQL_INTEGER, &ugold , 10, &cb_ugold);
+						retcode = SQLBindCol(hstmt, 3, SQL_INTEGER, &ugold, 10, &cb_ugold);
 						retcode = SQLBindCol(hstmt, 4, SQL_INTEGER, &ulevel, 10, &cb_ulevel);
 						retcode = SQLBindCol(hstmt, 5, SQL_INTEGER, &uexp, 10, &cb_uexp);
 						retcode = SQLBindCol(hstmt, 6, SQL_INTEGER, &uhp, 10, &cb_uhp);
@@ -668,10 +799,11 @@ bool search_user_id(int client) {
 						if (retcode == SQL_ERROR || retcode == SQL_SUCCESS_WITH_INFO)
 							printf("error\n");
 						if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+							clients[client].kind = ukind;
+							if (clients[client].login_kind != ukind) return false;
 							wprintf(L"%S : %d %d\n", uid, uposx, uposy);
 							clients[client].x = uposx;
 							clients[client].y = uposy;
-							clients[client].kind = ukind;
 							clients[client].GOLD = ugold;
 							clients[client].LEVEL = ulevel;
 							clients[client].EXP = uexp;
@@ -681,9 +813,84 @@ bool search_user_id(int client) {
 							return true;
 						}
 						else {
+							SQLCloseCursor(hstmt);
+							SQLFreeStmt(hstmt, SQL_UNBIND);
+
 							wprintf(L"No Search ID!! \n");
-							// EOF일때..! EOD일수도 (End Of File / End Of Data)
-							return false;
+							wprintf(L"Create New ID!! \n");
+
+							char query2[256] = {};
+							char query_buf[30] = "EXEC insert_user_data ";
+							char kind_buf[10] = {};
+							char pos_x_buf[10] = {};
+							char pos_y_buf[10] = {};
+							wchar_t buf2[256] = {};
+
+							if (clients[client].login_kind == FAIRY) {
+								clients[client].x = 65;
+								clients[client].y = 150;
+							}
+							else if (clients[client].login_kind == DEVIL) {
+								clients[client].x = 150;
+								clients[client].y = 235;
+							}
+							else if (clients[client].login_kind == ANGEL) {
+								clients[client].x = 150;
+								clients[client].y = 65;
+							}
+
+							_itoa_s(clients[client].login_kind, kind_buf, 10);
+							_itoa_s(clients[client].x, pos_x_buf, 10);
+							_itoa_s(clients[client].y, pos_y_buf, 10);
+
+							sprintf_s(query2, "%s%s, %s, %s, %s", query_buf, clients[client].login_id,
+								kind_buf, pos_x_buf, pos_y_buf);
+
+							cout << "sprintf_s 결과 : " << query2 << endl;
+
+							size_t wlen2 = 0, len2 = 0;
+							len2 = strnlen_s(query2, 256);
+							mbstowcs_s(&wlen2, buf2, len2 + 1, query2, len2);
+
+							retcode = SQLExecDirect(hstmt, (SQLWCHAR *)buf2, SQL_NTS);
+							if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+
+								// Bind columns 1, 2, and 3  
+								//retcode = SQLBindCol(hstmt, 1, SQL_INTEGER, &uid, 100, &cb_uid);
+								retcode = SQLBindCol(hstmt, 1, SQL_C_CHAR, uid, 20, &cb_uid);
+								retcode = SQLBindCol(hstmt, 2, SQL_INTEGER, &ukind, 10, &cb_ukind);
+								retcode = SQLBindCol(hstmt, 3, SQL_INTEGER, &ugold, 10, &cb_ugold);
+								retcode = SQLBindCol(hstmt, 4, SQL_INTEGER, &ulevel, 10, &cb_ulevel);
+								retcode = SQLBindCol(hstmt, 5, SQL_INTEGER, &uexp, 10, &cb_uexp);
+								retcode = SQLBindCol(hstmt, 6, SQL_INTEGER, &uhp, 10, &cb_uhp);
+								retcode = SQLBindCol(hstmt, 7, SQL_INTEGER, &uattack, 10, &cb_uattack);
+								retcode = SQLBindCol(hstmt, 8, SQL_INTEGER, &uposx, 10, &cb_uposx);
+								retcode = SQLBindCol(hstmt, 9, SQL_INTEGER, &uposy, 10, &cb_uposy);
+
+								retcode = SQLFetch(hstmt);
+								if (retcode == SQL_ERROR || retcode == SQL_SUCCESS_WITH_INFO)
+									printf("error\n");
+								if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+									wprintf(L"%S : %d %d\n", uid, uposx, uposy);
+									clients[client].x = uposx;
+									clients[client].y = uposy;
+									clients[client].kind = ukind;
+									clients[client].GOLD = ugold;
+									clients[client].LEVEL = ulevel;
+									clients[client].EXP = uexp;
+									clients[client].HP = uhp;
+									clients[client].ATTACK = uattack;
+									clients[client].is_login = true;
+									return true;
+								}
+								else {
+									wcout << L"ID 생성 실패!! \n";
+									return false;
+								}
+							}
+							else {
+								db_err_display(hstmt, SQL_HANDLE_STMT, retcode);
+							}
 						}
 					}
 					else {
@@ -773,7 +980,6 @@ bool save_user_data(int client) {
 					size_t wlen, len;
 					len = strnlen_s(query, 256);
 					mbstowcs_s(&wlen, buf, len + 1, query, len);
-					wcout << buf << endl;
 
 					// 여기를 봐라~!!~!!!!!!!!!!!!!!!!1
 					// SQLExecDirect하면 SQL 명령어가 실행됨
@@ -857,13 +1063,121 @@ bool is_npc_eyesight(int client, int npc) {
 	if (distance < (NPC_VIEW_RADIUS * NPC_VIEW_RADIUS)) return true;
 	else return false;
 }
+bool is_near_npc(int client, int npc) {
+	int x = clients[client].x - npcs[npc].x;
+	int y = clients[client].y - npcs[npc].y;
+
+	int distance = (x * x) + (y * y);
+
+	if (distance <= 1) return true;
+	else return false;
+}
 bool is_level_up(int client) {
 	int max_exp = (int)pow(2.0, clients[client].LEVEL) * 100;
 
-	if (clients[client].EXP > max_exp) return true;
+	if (clients[client].EXP >= max_exp) {
+		clients[client].EXP -= max_exp;
+		clients[client].LEVEL++;
+		clients[client].HP = cal_hp(client);
+		clients[client].ATTACK = (int)pow(2.0, clients[client].LEVEL);
+		add_db_evt(client, DB_EVT_UPDATE);
+		return true;
+	}
 	else return false;
 }
 
+double kind_effect(int client, int npc) {
+	if (clients[client].kind == FAIRY) {
+		if (npcs[npc].kind == FAIRY) return 1.0;
+		else if (npcs[npc].kind == ANGEL) return 2.0;
+		else if (npcs[npc].kind == DEVIL) return 0.5;
+	}
+	else if (clients[client].kind == ANGEL) {
+		if (npcs[npc].kind == FAIRY) return 0.5;
+		else if (npcs[npc].kind == ANGEL) return 1.0;
+		else if (npcs[npc].kind == DEVIL) return 2.0;
+
+	}
+	else if (clients[client].kind == DEVIL) {
+		if (npcs[npc].kind == FAIRY) return 2.0;
+		else if (npcs[npc].kind == ANGEL) return 0.5;
+		else if (npcs[npc].kind == DEVIL) return 1.0;
+
+	}
+}
+double npc_kind_effect(int client, int npc) {
+	if (npcs[npc].kind == FAIRY) {
+		if (clients[client].kind == FAIRY) return 1.0;
+		else if (clients[client].kind == ANGEL) return 2.0;
+		else if (clients[client].kind == DEVIL) return 0.5;
+	}
+	else if (npcs[npc].kind == ANGEL) {
+		if (clients[client].kind == FAIRY) return 0.5;
+		else if (clients[client].kind == ANGEL) return 1.0;
+		else if (clients[client].kind == DEVIL) return 2.0;
+
+	}
+	else if (npcs[npc].kind == DEVIL) {
+		if (clients[client].kind == FAIRY) return 2.0;
+		else if (clients[client].kind == ANGEL) return 0.5;
+		else if (clients[client].kind == DEVIL) return 1.0;
+
+	}
+}
+double equip_effect(int client, int npc) {
+	if (clients[client].item[CROWN] == 1
+		&& clients[client].item[BREATH] == 1
+		&& clients[client].item[SAINT_SWORD] == 1) {
+		if (npcs[npc].kind == DRAGON) return 2.0;
+	}
+
+	if (clients[client].item[CROWN] == 1) {
+		if (npcs[npc].kind == ANGEL) return 2.0;
+	}
+	if (clients[client].item[BREATH] == 1) {
+		if (npcs[npc].kind == FAIRY) return 2.0;
+	}
+	if (clients[client].item[CROWN] == 1) {
+		if (npcs[npc].kind == DEVIL) return 2.0;
+	}
+	return 1.0;
+}
+//double item_effect(int client) {
+//
+//}
+
+int cal_hp(int client) {
+	switch (clients[client].LEVEL) {
+	case 1: return 150; break;
+	case 2: return 450; break;
+	case 3: return 900; break;
+	case 4: return 1500; break;
+	case 5: return 2250; break;
+	case 6: return 3150; break;
+	case 7: return 4200; break;
+	case 8: return 5400; break;
+	case 9: return 6750; break;
+	case 10: return 8250; break;
+	}
+}
+
+wchar_t* get_NPC_name(int npc_id) {
+	wchar_t name_buf[MAX_STR_LEN];
+	if (npc_id < 1500)	wcsncpy_s(name_buf, L"픽시", 256);
+	else if (npc_id >= 1500 && npc_id < 3000) wcsncpy_s(name_buf, L"레비아탄", 256);
+	else if (npc_id >= 3000 && npc_id < 4500) wcsncpy_s(name_buf, L"우리엘", 256);
+	else if (npc_id >= 4500 && npc_id < 5250) wcsncpy_s(name_buf, L"퍽", 256);
+	else if (npc_id >= 5250 && npc_id < 6000) wcsncpy_s(name_buf, L"베히모스", 256);
+	else if (npc_id >= 6000 && npc_id < 6750) wcsncpy_s(name_buf, L"가브리엘", 256);
+	else if (npc_id >= 6750 && npc_id < 7050) wcsncpy_s(name_buf, L"듀라한", 256);
+	else if (npc_id >= 7050 && npc_id < 7350) wcsncpy_s(name_buf, L"마몬", 256);
+	else if (npc_id >= 7350 && npc_id < 7650) wcsncpy_s(name_buf, L"메타트론", 256);
+	else if (npc_id == 7650)  wcsncpy_s(name_buf, L"투명드래곤", 256);
+	else if (npc_id == 7651)  wcsncpy_s(name_buf, L"티타니아", 256);
+	else if (npc_id == 7652)  wcsncpy_s(name_buf, L"벨제뷔트", 256);
+	else if (npc_id == 7653)  wcsncpy_s(name_buf, L"미카엘", 256);
+	return name_buf;
+}
 void wakeup_NPC(int id)
 {
 	if (true == is_sleeping(id)) {
@@ -937,6 +1251,24 @@ void random_move_NPC(int npc_id)
 	}
 }
 
+int API_load_NPC_info(lua_State *L)
+{
+	int npc_id = (int)lua_tonumber(L, -4);
+	int init_HP = (int)lua_tonumber(L, -3);
+	int init_x = (int)lua_tonumber(L, -2);
+	int init_y = (int)lua_tonumber(L, -1);
+
+	lua_pop(L, 5);
+
+	npcs[npc_id].x = init_x;
+	npcs[npc_id].y = init_y;
+	npcs[npc_id].HP = init_HP;
+
+	wcout << L"HP : " << npcs[npc_id].HP << L"LEVEL : " << npcs[npc_id].LEVEL 
+		<< L" " << npcs[npc_id].x << L", " << npcs[npc_id].y;
+
+	return 0;
+}
 int API_get_player_x(lua_State *L)
 {
 	int obj_id = (int)lua_tonumber(L, -1);
@@ -996,10 +1328,12 @@ void process_packet(int client, char *packet)
 	{
 		cs_packet_login *p = reinterpret_cast<cs_packet_login *>(packet);
 
-		wcout << L"접속 요청 ID : " << p->player_id << '\n';
+		clients[client].login_kind = p->player_kind;
+		wcout << "packet_login_kind " << p->player_kind << endl;
+		wcout << "login_kind " << clients[client].login_kind << endl;
 		strcpy_s(clients[client].login_id, p->player_id);
-		wcout << L"ID : " << clients[client].login_id << '\n';
 		add_db_evt(client, DB_EVT_SEARCH);
+
 	}
 		break;
 
@@ -1040,6 +1374,7 @@ void process_packet(int client, char *packet)
 		unordered_set <int> new_npc_vl;
 		for (int npc_id = 0; npc_id < NUM_NPC; ++npc_id) {
 			if (false == is_player_npc_eyesight(client, npc_id)) continue;
+			if (true == npcs[npc_id].is_die) continue;
 			new_npc_vl.insert(npc_id);
 		}
 
@@ -1136,7 +1471,9 @@ void process_packet(int client, char *packet)
 	case CS_ATTACK :
 	{
 		cs_packet_attack *p = reinterpret_cast<cs_packet_attack *>(packet);
+//		wcout << L"공격 요청 ID  :  " << clients[client].login_id;
 
+		add_timer(client, EV_ATTACK, high_resolution_clock::now() + 1s);
 	}
 		break;
 
@@ -1159,8 +1496,10 @@ void process_packet(int client, char *packet)
 
 		clients[new_id].x = rand() % WORLD_WIDTH;
 		clients[new_id].y = rand() % WORLD_HEIGHT;
-
-		clients[client].is_login = true;
+		clients[new_id].is_dummy = true;
+		clients[new_id].is_login = true;
+		clients[new_id].in_use = true;
+		clients[new_id].HP = 9999;
 
 		for (int i = 0; i < MAX_USER; ++i) {
 			if (false == clients[i].in_use) continue;
@@ -1172,17 +1511,6 @@ void process_packet(int client, char *packet)
 
 			send_put_player_packet(i, new_id);
 		}
-
-		for (int npc = 0; npc < NUM_NPC; ++npc) {
-			if (false == is_player_npc_eyesight(new_id, npc)) continue;
-			wakeup_NPC(npc);
-			clients[new_id].v_lock.lock();
-			clients[new_id].npc_view_list.insert(npc);
-			clients[new_id].v_lock.unlock();
-
-			send_put_npc_packet(new_id, npc);
-		}
-
 	}
 		break;
 
@@ -1191,8 +1519,10 @@ void process_packet(int client, char *packet)
 		int new_id = client;
 
 		clients[new_id].x = clients[new_id].y = 150;
-
-		clients[client].is_login = true;
+		clients[new_id].is_dummy = true;
+		clients[new_id].is_login = true;
+		clients[new_id].in_use = true;
+		clients[new_id].HP = 9999;
 
 		for (int i = 0; i < MAX_USER; ++i) {
 			if (false == clients[i].in_use) continue;
@@ -1218,6 +1548,11 @@ void process_packet(int client, char *packet)
 	}
 	break;
 
+	//case CS_TEST_MOVE:
+	//{
+
+	//}
+	//break;
 	default :
 		wcout << L"정의되지 않은 패킷입니다! \n";
 	}
@@ -1226,23 +1561,363 @@ void process_event(EVENT_ST &ev)
 {
 	switch (ev.type) {
 	case EV_MOVE: {
+		if (ev.obj_id > 7650) return;
+		if (npcs[ev.obj_id].is_die) return;
+
+		if (npcs[ev.obj_id].type == WAR) {
+			if (npcs[ev.obj_id].target_user_id != -1
+				&& is_near_npc(npcs[ev.obj_id].target_user_id, ev.obj_id)) {
+				add_timer(ev.obj_id, EV_NPC_ATTACK,
+					high_resolution_clock::now() + 1s);
+				add_timer(ev.obj_id, EV_MOVE,
+					high_resolution_clock::now() + 1s);
+				return;
+
+			}
+		}
+
+
 		bool player_is_near = false;
+
 		for (int i = 0; i < MAX_USER; ++i) {
 			if (false == clients[i].in_use) continue;
 			if (false == is_npc_eyesight(i, ev.obj_id)) continue;
 			player_is_near = true;
 			break;
 		}
+
 		if (player_is_near) {
-			random_move_NPC(ev.obj_id);
-			add_timer(ev.obj_id, EV_MOVE,
-				high_resolution_clock::now() + 1s);
+			if (npcs[ev.obj_id].move_type == YES_MOVE) {
+				random_move_NPC(ev.obj_id);
+				add_timer(ev.obj_id, EV_MOVE,
+					high_resolution_clock::now() + 1s);
+
+				return;
+			}
+			
+			if (npcs[ev.obj_id].type == WAR) {
+				if (npcs[ev.obj_id].target_user_id != -1) {
+					random_move_NPC(ev.obj_id);
+					add_timer(ev.obj_id, EV_MOVE,
+						high_resolution_clock::now() + 1s);
+
+					return;
+				}
+			}
+
 		}
 		else {
 			npcs[ev.obj_id].is_sleeping = true;
 		}
-		break;
 	}
+				  break;
+
+	case EV_ATTACK: {
+		int client = ev.obj_id;
+
+		clients[client].v_lock.lock();
+		auto npc_vl = clients[client].npc_view_list;
+		clients[client].v_lock.unlock();
+
+		double damage = clients[client].ATTACK;
+
+		for (auto npc_id : npc_vl) {
+			if (is_near_npc(client, npc_id)) {
+				damage = damage * kind_effect(client, npc_id) * equip_effect(client, npc_id);
+
+				//wcout << L"damage : " << damage << endl;
+
+				// 안죽었을 경우 피 깎고, 타겟 플레이어 없으면 타겟으로 지정
+				if (npcs[npc_id].HP - (int)damage > 0) 
+				{
+					//wcout << L"BEFORE : " << npcs[npc_id].HP << endl;
+
+					npcs[npc_id].HP -= (int)damage;
+
+					//wcout << L"AFTER : " << npcs[npc_id].HP << endl;
+
+//					send_npc_stat_change_packet(client, npc_id);
+					wchar_t buf[MAX_STR_LEN] = {};
+					wchar_t buf_id[20];
+					size_t wlen, len;
+					len = strnlen_s(clients[client].login_id, 20);
+					mbstowcs_s(&wlen, buf_id, len + 1, clients[client].login_id, len);
+
+					wchar_t npc_name[MAX_STR_LEN];
+					wcsncpy_s(npc_name, get_NPC_name(npc_id), 256);
+
+					wsprintf(buf, TEXT("%s%s%s %d%s"), buf_id, TEXT(" → "), npc_name, (int)damage, TEXT(" 데미지"));
+
+					for (int i = 0; i < MAX_USER; ++i) {
+						if (!clients[i].in_use) continue;
+						send_system_chat_packet(i, client, buf);
+					}
+
+					if (npcs[npc_id].target_user_id == -1)
+					{
+						npcs[npc_id].target_user_id = client;
+						if (npcs[npc_id].move_type == NO_MOVE 
+							|| npcs[npc_id].type == PEACE)
+						{
+							add_timer(ev.obj_id, EV_NPC_ATTACK,
+								high_resolution_clock::now() + 1s);
+
+							return;
+						}
+					}
+				}
+				// 죽었을 경우, 죽고, 플레이어 뷰리스트에서 지우고, 지우는 패킷 보내고, 부활 이벤트 추가
+				// 경험치, 골드얻고 만약 레벨업 하면 HP 증가, 경험치 제대로 계산하기..
+				else {
+					
+					npcs[npc_id].HP = 0;
+					npcs[npc_id].is_die = true;
+					npcs[npc_id].is_sleeping = true;
+					npcs[npc_id].target_user_id = -1;
+					npcs[npc_id].x = npcs[npc_id].y = 500;
+
+					wchar_t buf[MAX_STR_LEN] = {};
+					wchar_t buf_id[20];
+					size_t wlen, len;
+					len = strnlen_s(clients[client].login_id, 20);
+					mbstowcs_s(&wlen, buf_id, len + 1, clients[client].login_id, len);
+
+					wchar_t npc_name[20];
+					wcsncpy_s(npc_name, get_NPC_name(npc_id), 256);
+
+					wsprintf(buf, TEXT("%s%s%s%s"), buf_id, TEXT(" → "), npc_name, TEXT(" 처치!"));
+
+					for (int i = 0; i < MAX_USER; ++i) {
+						if (!clients[i].in_use) continue;
+						send_system_chat_packet(i, client, buf);
+					}
+
+					clients[client].GOLD += npcs[npc_id].GOLD;
+					clients[client].EXP += npcs[npc_id].EXP;
+
+					if (is_level_up(client)) {
+						wchar_t buf[MAX_STR_LEN] = {};
+						wchar_t buf_id[20];
+						size_t wlen, len;
+						len = strnlen_s(clients[client].login_id, 20);
+						mbstowcs_s(&wlen, buf_id, len + 1, clients[client].login_id, len);
+
+						wsprintf(buf, TEXT("%s%s"), buf_id, TEXT("님이 레벨업!"));
+
+
+						for (int i = 0; i < MAX_USER; ++i) {
+							if (!clients[i].in_use) continue;
+							send_system_chat_packet(i, client, buf);
+						}
+					}
+					send_player_stat_change_packet(client, client);
+					send_npc_pos_packet(client, npc_id);
+
+					for (int i = 0; i < MAX_USER; ++i) {
+						if (!clients[i].in_use) continue;
+
+						clients[i].v_lock.lock();
+						if (clients[i].npc_view_list.count(npc_id) > 0) {
+							clients[i].npc_view_list.erase(npc_id);
+							clients[i].v_lock.unlock();
+						}
+						else clients[i].v_lock.unlock();
+					}
+
+
+					send_remove_npc_packet(client, npc_id);
+
+					add_timer(npc_id, EV_NPC_RESURRECTION, high_resolution_clock::now() + 30s);
+				}
+
+			}
+		}
+
+	}
+					break;
+
+	case EV_NPC_ATTACK: {
+		int npc_id = ev.obj_id;
+		int target = npcs[npc_id].target_user_id;
+		
+		if (clients[target].is_dummy) return;
+
+		if (npcs[npc_id].is_die) return;
+		if (npcs[npc_id].is_sleeping) return;
+
+		double damage = npcs[npc_id].ATTACK;
+
+		if (is_near_npc(target, npc_id)) {
+			damage = damage * npc_kind_effect(target, npc_id);
+//			wcout << L"npc가 입힌 데미지 : " << damage;
+
+			if (clients[target].HP - (int)damage > 0)
+			{
+				clients[target].HP -= (int)damage;
+
+				send_player_stat_change_packet(target, target);
+
+				wchar_t buf[MAX_STR_LEN] = {};
+				wchar_t buf_id[20];
+				size_t wlen, len;
+				len = strnlen_s(clients[target].login_id, 20);
+				mbstowcs_s(&wlen, buf_id, len + 1, clients[target].login_id, len);
+
+				wchar_t npc_name[MAX_STR_LEN];
+				wcsncpy_s(npc_name, get_NPC_name(npc_id), 256);
+
+				wsprintf(buf, TEXT("%s%s%s %d%s"), npc_name, TEXT(" → "), buf_id, (int)damage, TEXT(" 데미지"));
+
+				for (int i = 0; i < MAX_USER; ++i) {
+					if (!clients[i].in_use) continue;
+					send_system_chat_packet(i, target, buf);
+				}
+			}
+			// 죽었을 경우, 죽고, 플레이어 뷰리스트에서 지우고, 지우는 패킷 보내고, 부활 이벤트 추가
+			else {
+				clients[target].HP = 0;
+				clients[target].EXP = clients[target].EXP / 2;
+
+				send_player_stat_change_packet(target, target);
+
+				wchar_t buf[MAX_STR_LEN] = {};
+				wchar_t buf_id[20];
+				size_t wlen, len;
+				len = strnlen_s(clients[target].login_id, 20);
+				mbstowcs_s(&wlen, buf_id, len + 1, clients[target].login_id, len);
+
+				wchar_t npc_name[20];
+				wcsncpy_s(npc_name, get_NPC_name(npc_id), 256);
+
+				wsprintf(buf, TEXT("%s%s%s%s"), npc_name, TEXT(" → "), buf_id, TEXT(" 처치!"));
+
+				for (int i = 0; i < MAX_USER; ++i) {
+					if (!clients[i].in_use) continue;
+					send_system_chat_packet(i, target, buf);
+				}
+
+				clients[target].v_lock.lock();
+				auto tmp_vl = clients[target].view_list;
+				clients[target].v_lock.unlock();
+
+				for (auto other_player : tmp_vl) {
+					clients[other_player].v_lock.lock();
+					if (clients[other_player].view_list.count(target) > 0) {
+						clients[other_player].view_list.erase(target);
+						clients[other_player].v_lock.unlock();
+						send_remove_player_packet(other_player, target);
+					}
+					else clients[other_player].v_lock.unlock();
+
+				}
+
+				clients[target].v_lock.lock();
+				clients[target].view_list.clear();
+				clients[target].npc_view_list.clear();
+				clients[target].v_lock.unlock();
+
+				send_remove_player_packet(target, target);
+
+				add_timer(target, EV_RESURRECTION, high_resolution_clock::now() + 1s);
+			}
+		}
+
+	}
+					break;
+
+	case EV_RESURRECTION :
+	{
+		int new_id = ev.obj_id;
+
+		clients[new_id].HP = cal_hp(new_id);
+
+		if (clients[new_id].kind == FAIRY) {
+			clients[new_id].x = 65;
+			clients[new_id].y = 150;
+		}
+		else if (clients[new_id].kind == DEVIL) {
+			clients[new_id].x = 150;
+			clients[new_id].y = 235;
+		}
+		else if (clients[new_id].kind == ANGEL) {
+			clients[new_id].x = 150;
+			clients[new_id].y = 65;
+		}
+		add_db_evt(new_id, DB_EVT_UPDATE);
+
+		send_put_player_packet(new_id, new_id); // 나한테 내 위치 보내기
+
+		// 다른 플레이어의 뷰리스트에 나를 추가하고 전송
+		for (int i = 0; i < MAX_USER; ++i) {
+			if (false == clients[i].in_use) continue;
+			if (false == is_player_player_eyesight(new_id, i)) continue;
+			if (i == new_id) continue;
+
+			clients[i].v_lock.lock();
+			clients[i].view_list.insert(new_id);
+			clients[i].v_lock.unlock();
+
+			send_put_player_packet(i, new_id);
+		}
+
+
+		// 내 위치를 뷰리스트에 있는 다른 플레이어에게 전송
+		for (int i = 0; i < MAX_USER; ++i) {
+			if (false == clients[i].in_use) continue;
+			if (i == new_id) continue;
+			if (false == is_player_player_eyesight(i, new_id)) continue;
+
+			clients[new_id].v_lock.lock();
+			clients[new_id].view_list.insert(i);
+			clients[new_id].v_lock.unlock();
+
+			send_put_player_packet(new_id, i);
+		}
+
+
+		// 내 주변에 있는 NPC를 뷰리스트에 추가
+		for (int i = 0; i < NUM_NPC; ++i) {
+			if (false == is_player_npc_eyesight(new_id, i)) continue;
+
+			clients[new_id].v_lock.lock();
+			clients[new_id].npc_view_list.insert(i);
+			clients[new_id].v_lock.unlock();
+
+			send_put_npc_packet(new_id, i);
+
+			wakeup_NPC(i);
+		}
+
+		wchar_t buf[MAX_STR_LEN] = {};
+		wchar_t buf_id[20];
+		size_t wlen, len;
+		len = strnlen_s(clients[new_id].login_id, 20);
+		mbstowcs_s(&wlen, buf_id, len + 1, clients[new_id].login_id, len);
+
+		wsprintf(buf, TEXT("%s%s"), buf_id, TEXT("님 부활!!"));
+
+		for (int i = 0; i < MAX_USER; ++i) {
+			if (!clients[i].in_use) continue;
+			send_system_chat_packet(i, new_id, buf);
+		}
+
+	}
+	break;
+	case EV_NPC_RESURRECTION:{
+		npcs[ev.obj_id].target_user_id = -1;
+
+		lua_State *L = npcs[ev.obj_id].L;
+				
+		npcs[ev.obj_id].l_lock.lock();
+		lua_getglobal(L, "load_npc_info");
+		lua_pcall(L, 0, 0, 0);
+		npcs[ev.obj_id].l_lock.unlock();
+
+		npcs[ev.obj_id].is_die = false;
+		npcs[ev.obj_id].is_sleeping = true;
+	} 
+					break;
+
 	default:
 		cout << "Unknown Event Error!\n";
 		while (true);
@@ -1252,6 +1927,7 @@ void process_db_event(DB_EVENT_ST &ev) {
 	int new_id = ev.client_id;
 	switch (ev.type) {
 	case DB_EVT_SEARCH:
+		if (clients[new_id].is_dummy) return;
 		if (search_user_id(new_id))
 		{
 			send_login_ok_packet(new_id);
@@ -1298,8 +1974,28 @@ void process_db_event(DB_EVENT_ST &ev) {
 				wakeup_NPC(i);
 			}
 
+			for (int i = 0; i < MAX_USER; ++i) {
+				if (!clients[i].in_use) continue;
+				wchar_t buf[MAX_STR_LEN] = {};
+				wchar_t buf_id[20];
+				size_t wlen, len;
+				len = strnlen_s(clients[new_id].login_id, 20);
+				mbstowcs_s(&wlen, buf_id, len + 1, clients[new_id].login_id, len);
+
+				wsprintf(buf, TEXT("%s%s"), buf_id, TEXT("님이 로그인하셨습니다."));
+				send_system_chat_packet(i, new_id, buf);
+			}
 		}
 		else {
+			wchar_t buf[MAX_STR_LEN] = {};
+			wchar_t buf_id[20];
+			size_t wlen, len;
+			len = strnlen_s(clients[new_id].login_id, 20);
+			mbstowcs_s(&wlen, buf_id, len + 1, clients[new_id].login_id, len);
+
+			wsprintf(buf, TEXT("%s%s"), buf_id, TEXT("은(는) 중복된 ID입니다."));
+			send_system_chat_packet(new_id, new_id, buf);
+
 			send_login_fail_packet(new_id);
 			disconnect_client(new_id);
 		}
@@ -1307,17 +2003,31 @@ void process_db_event(DB_EVENT_ST &ev) {
 		break;
 
 	case DB_EVT_SAVE:
+		if (clients[new_id].is_dummy) return;
+
 		if (save_user_data(new_id)) {
-			wcout << L"저장 성공!\n";
+			wcout << L"클라이언트 정보 저장 성공!\n";
 		}
 		else {
-			wcout << L"저장 실패!!!\n";
+			wcout << L"클라이언트 정보 저장 실패!!!\n";
 		}
-		wcout << L"연결을 종료합니다! \n";
+//		wcout << L"연결을 종료합니다! \n";
 		clients[new_id].is_login = false;
 		disconnect_client(new_id);
 
 		break;
+
+	case DB_EVT_UPDATE:
+		if (clients[new_id].is_dummy) return;
+
+		if (save_user_data(new_id)) {
+			wcout << L"클라이언트 정보 저장 성공!\n";
+		}
+		else {
+			wcout << L"클라이언트 정보 저장 실패!!!\n";
+		}
+		break;
+
 	default:
 		break;
 	}
@@ -1462,6 +2172,7 @@ void send_player_stat_change_packet(int client, int player)
 	packet.HP = clients[client].HP;
 	packet.LEVEL = clients[client].LEVEL;
 	packet.EXP = clients[client].EXP;
+	packet.GOLD = clients[client].GOLD;
 
 	send_packet(client, &packet);
 }
@@ -1476,6 +2187,16 @@ void send_npc_stat_change_packet(int client, int npc)
 	packet.LEVEL = npcs[client].LEVEL;
 	packet.EXP = npcs[client].EXP;
 
+	send_packet(client, &packet);
+}
+void send_system_chat_packet(int client, int from_id, wchar_t *mess)
+{
+	sc_packet_chat packet;
+	packet.id = from_id;
+	packet.size = sizeof(packet);
+	packet.type = SC_CHAT;
+	packet.obj_class = PLAYER;
+	wcscpy_s(packet.message, mess);
 	send_packet(client, &packet);
 }
 void send_player_chat_packet(int client, int from_id, wchar_t *mess)
@@ -1507,6 +2228,7 @@ int main()
 
 	Initialize_PC();
 	Initialize_NPC();
+
 	g_iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, 0, 0, 0);
 
 	for (int i = 0; i < 4; ++i)

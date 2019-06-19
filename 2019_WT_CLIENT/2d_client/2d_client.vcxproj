@@ -20,6 +20,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\2019_TT\2019_TT\protocol.h" />
+    <ClInclude Include="2019_텀프_protocol.h" />
     <ClInclude Include="gpdumb1.h" />
     <ClInclude Include="resource.h" />
   </ItemGroup>

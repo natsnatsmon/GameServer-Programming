@@ -158,7 +158,7 @@ int DrawGLScene(GLvoid)									// Here's Where We Do All The Drawing
 	glRasterPos2f(-0.5f, 0.00f);
 	
 	// HOTSPOT
-	if (mod == 5) {
+	if (mod == 7) {
 		glPrint("HOTSPOT TEST MOD [%d]", cuser);	// Print GL Text To The Screen
 	}
 	else if (mod == 6) {
@@ -176,8 +176,8 @@ int DrawGLScene(GLvoid)									// Here's Where We Do All The Drawing
 	{
 		float x, y, z;
 
-		x = points[i * 2] / 500.0 - 1.25;
-		y = 1.25 - points[i * 2 + 1] / 500.0;
+		x = points[i * 2] / 200.0 - 1.25;
+		y = 1.25 - points[i * 2 + 1] / 200.0;
 		z = -1.0f;
 		glVertex3f(x, y, z);
 	}
@@ -507,7 +507,7 @@ int WINAPI WinMain(HINSTANCE	hInstance,			// Instance
 
 			if (keys[VK_F1]) {
 				keys[VK_F1] = FALSE;
-				mod = 5; // CS_HOTSPOT_MOD
+				mod = 7; // CS_HOTSPOT_MOD
 
 				done = TRUE;							// ESC or DrawGLScene Signalled A Quit
 			}

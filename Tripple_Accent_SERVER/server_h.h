@@ -10,9 +10,10 @@ extern "C" {
 }
 
 
-enum EVENT_TYPE { EV_PLAYER_MOVE_DETECT, EV_MOVE, EV_HEAL, EV_ATTACK,
+enum EVENT_TYPE { EV_PLAYER_MOVE_DETECT, EV_MOVE, EV_NPC_ATTACK, EV_NPC_RESURRECTION,
+				  EV_HEAL, EV_ATTACK, EV_RESURRECTION,
 				  EV_RECV, EV_SEND,
-			  	  DB_EVT_SEARCH, DB_EVT_SAVE };
+			  	  DB_EVT_SEARCH, DB_EVT_SAVE, DB_EVT_UPDATE };
 
 struct EVENT_ST {
 	int obj_id;
@@ -54,11 +55,21 @@ bool is_sleeping(int id);
 bool is_player_player_eyesight(int client, int other_client);
 bool is_player_npc_eyesight(int client, int npc_id);
 bool is_npc_eyesight(int client_id, int npc_id);
+bool is_near_npc(int client, int npc);
 bool is_level_up(int client);
 
+double kind_effect(int client, int npc);
+double npc_kind_effect(int client, int npc);
+double equip_effect(int client, int npc);
+double item_effect(int client);
+
+int cal_hp(int client);
+
+wchar_t* get_NPC_name(int npc_id);
 void wakeup_NPC(int id);
 void random_move_NPC(int id);
 
+int API_load_NPC_info(lua_State *L);
 int API_get_player_x(lua_State *L);
 int API_get_player_y(lua_State *L);
 int API_get_npc_x(lua_State *L);
@@ -80,5 +91,6 @@ void send_player_pos_packet(int client, int pl);
 void send_npc_pos_packet(int client, int npc);
 void send_player_stat_change_packet(int client, int player);
 void send_npc_stat_change_packet(int client, int npc);
+void send_system_chat_packet(int client, int from_id, wchar_t *mess);
 void send_player_chat_packet(int client, int from_id, wchar_t *mess);
 void send_npc_chat_packet(int client, int from_id, wchar_t *mess);
